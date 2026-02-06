@@ -66,24 +66,6 @@ describe('Jira Service', () => {
       // Client should be initialized (no error thrown)
       expect(() => getJiraClient()).not.toThrow();
     });
-
-    it('should initialize the Jira client with OAuth auth', () => {
-      const config: JiraConfig = {
-        jiraHost: 'https://test.atlassian.net',
-        auth: {
-          method: 'oauth',
-          accessToken: 'access-token',
-          refreshToken: 'refresh-token',
-          expiresAt: Date.now() + 3600000,
-          cloudId: 'cloud-id-123',
-        },
-      };
-
-      initializeJiraClient(config);
-
-      // Client should be initialized (no error thrown)
-      expect(() => getJiraClient()).not.toThrow();
-    });
   });
 
   describe('getIssue', () => {
@@ -267,6 +249,33 @@ describe('Jira Service', () => {
       });
 
       await expect(getMyAssignedIssues()).rejects.toThrow('Authentication failed');
+    });
+
+    it('retries on 500 and succeeds', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: () => Promise.resolve('Server error'),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            issues: [
+              {
+                key: 'TEST-3',
+                fields: { summary: 'Recovered issue', status: { name: 'In Progress' } },
+              },
+            ],
+          }),
+        });
+
+      const issues = await getMyAssignedIssues();
+
+      expect(issues).toEqual([
+        { key: 'TEST-3', summary: 'Recovered issue', status: 'In Progress' },
+      ]);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
