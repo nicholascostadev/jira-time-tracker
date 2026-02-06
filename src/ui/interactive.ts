@@ -19,6 +19,7 @@ import {
   resumeTimer,
   stopTimer,
   getElapsedSeconds,
+  getWorklogSegments,
   formatTime,
   formatTimeHumanReadable,
 } from '../services/timer.js';
@@ -26,6 +27,13 @@ import { addWorklog } from '../services/jira.js';
 import { getActiveTimer, addFailedWorklog, getDefaultWorklogMessage, setDefaultWorklogMessage } from '../services/config.js';
 import { colors } from './theme.js';
 import { Spinner } from './components.js';
+import {
+  buildWorklogsToPost,
+  canSplitWorklogEntries,
+  countRoundedEntries,
+  getDefaultWorklogMode,
+  type WorklogMode,
+} from './worklog-review.js';
 
 interface InteractiveTimerOptions {
   issue: JiraIssue;
@@ -83,11 +91,11 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
   return new Promise<TimerResult>((resolve) => {
     let showQuitConfirm = false;
-    let currentScreen: 'timer' | 'description' = 'timer';
+    let currentScreen: 'timer' | 'description' | 'review' = 'timer';
     let saveAsDefault = false;
 
     const onSigint = () => {
-      if (currentScreen === 'description') {
+      if (currentScreen === 'description' || currentScreen === 'review') {
         // On description screen, Ctrl+C resumes the timer
         resumeTimer();
         currentScreen = 'timer';
@@ -130,7 +138,14 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       resolve({ action: 'quit' });
     };
 
-    const logWorklog = async (description: string) => {
+    const formatClock = (timestamp: number): string => {
+      return new Date(timestamp).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    };
+
+    const logWorklog = async (description: string, mode: WorklogMode) => {
       if (isExiting) return;
       isExiting = true;
       process.removeListener('SIGINT', onSigint);
@@ -138,11 +153,6 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
-      }
-
-      // Save as default if toggled
-      if (saveAsDefault) {
-        setDefaultWorklogMessage(description);
       }
 
       const stoppedTimer = stopTimer();
@@ -156,9 +166,13 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       }
 
       const elapsed = getElapsedSeconds(stoppedTimer);
-      const isUnderMinimum = elapsed < 60;
-      const loggedTimeStr = isUnderMinimum ? '1 minute' : formatTimeHumanReadable(elapsed);
-      const timeStr = formatTimeHumanReadable(elapsed);
+      const segments = getWorklogSegments(stoppedTimer);
+
+      const worklogsToPost = buildWorklogsToPost(mode, segments, elapsed, stoppedTimer.startedAt);
+
+      const loggedTimeStr = formatTimeHumanReadable(elapsed < 60 ? 60 : elapsed);
+      const roundedSegmentsCount = countRoundedEntries(worklogsToPost);
+      const isSingleEntry = worklogsToPost.length === 1;
 
       // Show logging screen in the same renderer
       renderer.keyInput.removeAllListeners('keypress');
@@ -206,14 +220,22 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               Box(
                 { marginTop: 1 },
                 Text({
-                  content: `logging ${loggedTimeStr} to ${issue.key}`,
+                  content: `logging ${worklogsToPost.length} ${worklogsToPost.length === 1 ? 'entry' : 'entries'} to ${issue.key}`,
                   fg: colors.textMuted,
                 })
               ),
-              ...(isUnderMinimum
+              ...((isSingleEntry && worklogsToPost[0].durationSeconds < 60)
                 ? [
                     Text({
-                      content: `tracked ${timeStr} — Jira requires a minimum of 1 minute`,
+                      content: `tracked ${formatTimeHumanReadable(worklogsToPost[0].durationSeconds)} — Jira requires a minimum of 1 minute`,
+                      fg: colors.textDim,
+                    }),
+                  ]
+                : []),
+              ...(roundedSegmentsCount > 0 && !isSingleEntry
+                ? [
+                    Text({
+                      content: `${roundedSegmentsCount} short segment${roundedSegmentsCount === 1 ? '' : 's'} will be rounded to 1 minute`,
                       fg: colors.textDim,
                     }),
                   ]
@@ -229,24 +251,35 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         renderLogging();
       }, 300);
 
-      try {
-        await addWorklog(
-          stoppedTimer.issueKey,
-          elapsed,
-          description,
-          new Date(stoppedTimer.startedAt)
-        );
-      } catch (error) {
-        // Worklog failed — save to offline queue for later retry
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        addFailedWorklog({
-          issueKey: stoppedTimer.issueKey,
-          timeSpentSeconds: elapsed,
-          comment: description,
-          started: new Date(stoppedTimer.startedAt).toISOString(),
-          failedAt: Date.now(),
-          error: errorMessage,
-        });
+      let failedCount = 0;
+      let firstErrorMessage = '';
+
+      for (const entry of worklogsToPost) {
+        try {
+          await addWorklog(
+            stoppedTimer.issueKey,
+            entry.durationSeconds,
+            description,
+            new Date(entry.startedAt)
+          );
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          if (!firstErrorMessage) {
+            firstErrorMessage = errorMessage;
+          }
+          failedCount++;
+          addFailedWorklog({
+            issueKey: stoppedTimer.issueKey,
+            timeSpentSeconds: entry.durationSeconds,
+            comment: description,
+            started: new Date(entry.startedAt).toISOString(),
+            failedAt: Date.now(),
+            error: errorMessage,
+          });
+        }
+      }
+
+      if (failedCount > 0) {
         clearInterval(loggingInterval);
         clearRenderer(renderer);
         renderer.root.add(
@@ -261,7 +294,9 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               backgroundColor: colors.bg,
             },
             Text({
-              content: `Failed to log time: ${errorMessage}`,
+              content: failedCount === worklogsToPost.length
+                ? `Failed to log time: ${firstErrorMessage}`
+                : `Logged ${worklogsToPost.length - failedCount}/${worklogsToPost.length}. ${failedCount} saved offline.`,
               fg: colors.error,
             }),
             Text({
@@ -274,7 +309,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         if (ownsRenderer) {
           renderer.destroy();
         }
-        resolve({ action: 'error', message: errorMessage });
+        resolve({ action: 'error', message: firstErrorMessage || 'Some worklogs failed to post' });
         return;
       }
 
@@ -319,15 +354,26 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               border: true,
             },
             Text({
-              content: `+ logged ${loggedTimeStr} to ${issue.key}`,
+              content: `+ logged ${worklogsToPost.length} ${worklogsToPost.length === 1 ? 'entry' : 'entries'} (${loggedTimeStr}) to ${issue.key}`,
               fg: colors.success,
             }),
-            ...(isUnderMinimum
+            ...((isSingleEntry && worklogsToPost[0].durationSeconds < 60)
               ? [
                   Box(
                     { marginTop: 1 },
                     Text({
-                      content: `tracked ${timeStr} — rounded up to Jira's 1 minute minimum`,
+                      content: `tracked ${formatTimeHumanReadable(worklogsToPost[0].durationSeconds)} — rounded up to Jira's 1 minute minimum`,
+                      fg: colors.textDim,
+                    })
+                  ),
+                ]
+              : []),
+            ...(roundedSegmentsCount > 0 && !isSingleEntry
+              ? [
+                  Box(
+                    { marginTop: 1 },
+                    Text({
+                      content: `${roundedSegmentsCount} short segment${roundedSegmentsCount === 1 ? '' : 's'} rounded up to Jira's 1 minute minimum`,
                       fg: colors.textDim,
                     })
                   ),
@@ -412,7 +458,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             marginTop: 2,
           },
           Text({
-            content: '[enter] log',
+            content: '[enter] review',
             fg: colors.textDim,
           }),
           Text({
@@ -439,9 +485,154 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       }, 50);
     };
 
-    const showDescriptionScreen = () => {
+    const buildReviewUI = (description: string, selectedMode: WorklogMode) => {
+      const currentTimer = getActiveTimer();
+      if (!currentTimer) {
+        return null;
+      }
+
+      const elapsed = getElapsedSeconds(currentTimer);
+      const segments = getWorklogSegments(currentTimer);
+      const hasSplitOptions = canSplitWorklogEntries(segments, elapsed);
+      const previewSegments = hasSplitOptions
+        ? segments
+        : [{
+            startedAt: currentTimer.startedAt,
+            endedAt: Date.now(),
+            durationSeconds: elapsed,
+          }];
+
+      const singleRounded = elapsed < 60;
+
+      return Box(
+        {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          padding: 1,
+          backgroundColor: colors.bg,
+        },
+        Box(
+          {
+            width: '100%',
+            height: 3,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+            marginBottom: 1,
+          },
+          Text({
+            content: t`${bold(fg(colors.text)('REVIEW WORKLOG'))}`,
+          })
+        ),
+        Box(
+          {
+            width: '100%',
+            flexGrow: 1,
+            flexDirection: 'column',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+            padding: 1,
+            gap: 1,
+          },
+          Text({ content: `Issue: ${issue.key}`, fg: colors.text }),
+          Text({ content: `Description: ${description}`, fg: colors.textMuted }),
+          Text({ content: `Total tracked: ${formatTimeHumanReadable(elapsed)}`, fg: colors.text }),
+          Text({
+            content: selectedMode === 'single' ? '* single entry' : '  single entry',
+            fg: selectedMode === 'single' ? colors.success : colors.textDim,
+          }),
+          Text({
+            content: `  ${formatClock(previewSegments[0].startedAt)} -> ${formatClock(previewSegments[previewSegments.length - 1].endedAt)} (${formatTimeHumanReadable(elapsed < 60 ? 60 : elapsed)})${singleRounded ? ' rounded if under 60s' : ''}`,
+            fg: colors.textDim,
+          }),
+          Text({
+            content: hasSplitOptions
+              ? (selectedMode === 'split' ? '* split entries' : '  split entries')
+              : `  split entries (requires >= 1m total)`,
+            fg: hasSplitOptions
+              ? (selectedMode === 'split' ? colors.success : colors.textDim)
+              : colors.textDim,
+          }),
+          ...previewSegments.map((segment, index) => {
+            const rounded = segment.durationSeconds < 60;
+            return Text({
+              content: `  ${index + 1}. ${formatClock(segment.startedAt)} -> ${formatClock(segment.endedAt)} (${formatTimeHumanReadable(segment.durationSeconds < 60 ? 60 : segment.durationSeconds)})${rounded ? ' rounded' : ''}`,
+              fg: colors.textDim,
+            });
+          })
+        ),
+        Box(
+          {
+            flexDirection: 'row',
+            gap: 3,
+            marginTop: 1,
+          },
+          Text({ content: '[enter] confirm', fg: colors.textDim }),
+          Text({
+            content: hasSplitOptions ? '[tab] toggle single/split' : '[tab] no split available',
+            fg: colors.textDim,
+          }),
+          Text({ content: '[esc] back', fg: colors.textDim })
+        )
+      );
+    };
+
+    const showReviewScreen = (description: string) => {
+      currentScreen = 'review';
+      renderer.keyInput.removeAllListeners('keypress');
+
+      const currentTimer = getActiveTimer();
+      if (!currentTimer) {
+        void quit();
+        return;
+      }
+
+      const segments = getWorklogSegments(currentTimer);
+      const elapsed = getElapsedSeconds(currentTimer);
+      const hasSplitOptions = canSplitWorklogEntries(segments, elapsed);
+      let selectedMode: WorklogMode = getDefaultWorklogMode(segments, elapsed);
+
+      const renderReview = () => {
+        clearRenderer(renderer);
+        const reviewUI = buildReviewUI(description, selectedMode);
+        if (reviewUI) {
+          renderer.root.add(reviewUI);
+        }
+      };
+
+      renderReview();
+
+      renderer.keyInput.on('keypress', (key: KeyEvent) => {
+        if (key.name === 'escape') {
+          showDescriptionScreen(description, true);
+          return;
+        }
+
+        if (key.name === 'tab' || key.name === 'left' || key.name === 'right') {
+          if (!hasSplitOptions) {
+            return;
+          }
+          selectedMode = selectedMode === 'single' ? 'split' : 'single';
+          renderReview();
+          return;
+        }
+
+        if (key.name === 'return' || key.name === 'enter') {
+          void logWorklog(description, selectedMode);
+        }
+      });
+    };
+
+    const showDescriptionScreen = (initialValue?: string, keepDefaultToggle = false) => {
       currentScreen = 'description';
-      saveAsDefault = false;
+      if (!keepDefaultToggle) {
+        saveAsDefault = false;
+      }
 
       // Pause the timer while entering description
       const currentTimer = getActiveTimer();
@@ -458,7 +649,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       renderer.keyInput.removeAllListeners('keypress');
 
       // Pre-fill value: CLI -d flag takes priority, then saved default
-      const prefillValue = options.defaultDescription || getDefaultWorklogMessage();
+      const prefillValue = initialValue ?? options.defaultDescription ?? getDefaultWorklogMessage();
 
       renderDescription();
 
@@ -507,7 +698,10 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               // Don't allow empty — just ignore the enter press
               return;
             }
-            void logWorklog(value);
+            if (saveAsDefault) {
+              setDefaultWorklogMessage(value);
+            }
+            showReviewScreen(value);
           }
           return;
         }

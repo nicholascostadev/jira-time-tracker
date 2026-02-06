@@ -19,8 +19,20 @@ export interface TimerState {
   startedAt: number;
   pausedAt: number | null;
   totalPausedTime: number;
+  intervals: TimerInterval[];
   isPaused: boolean;
   isRunning: boolean;
+}
+
+export interface TimerInterval {
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface WorklogSegment {
+  startedAt: number;
+  endedAt: number;
+  durationSeconds: number;
 }
 
 export interface JiraIssue {
