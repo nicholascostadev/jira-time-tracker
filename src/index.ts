@@ -44,4 +44,4 @@ program
   .description('Update jtt to the latest GitHub release binary')
   .action(updateCommand);
 
-program.parse();
+await program.parseAsync();
