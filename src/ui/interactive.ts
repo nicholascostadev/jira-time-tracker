@@ -27,7 +27,13 @@ import { addWorklog } from '../services/jira.js';
 import { getActiveTimer, addFailedWorklog, getDefaultWorklogMessage, setDefaultWorklogMessage } from '../services/config.js';
 import { colors } from './theme.js';
 import { Spinner } from './components.js';
-import { buildWorklogsToPost, countRoundedEntries, getDefaultWorklogMode, type WorklogMode } from './worklog-review.js';
+import {
+  buildWorklogsToPost,
+  canSplitWorklogEntries,
+  countRoundedEntries,
+  getDefaultWorklogMode,
+  type WorklogMode,
+} from './worklog-review.js';
 
 interface InteractiveTimerOptions {
   issue: JiraIssue;
@@ -487,7 +493,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
       const elapsed = getElapsedSeconds(currentTimer);
       const segments = getWorklogSegments(currentTimer);
-      const hasSplitOptions = segments.length > 1;
+      const hasSplitOptions = canSplitWorklogEntries(segments, elapsed);
       const previewSegments = hasSplitOptions
         ? segments
         : [{
@@ -547,7 +553,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
           Text({
             content: hasSplitOptions
               ? (selectedMode === 'split' ? '* split entries' : '  split entries')
-              : '  split entries (not available)',
+              : `  split entries (requires >= 1m total)`,
             fg: hasSplitOptions
               ? (selectedMode === 'split' ? colors.success : colors.textDim)
               : colors.textDim,
@@ -587,8 +593,9 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       }
 
       const segments = getWorklogSegments(currentTimer);
-      const hasSplitOptions = segments.length > 1;
-      let selectedMode: WorklogMode = getDefaultWorklogMode(segments);
+      const elapsed = getElapsedSeconds(currentTimer);
+      const hasSplitOptions = canSplitWorklogEntries(segments, elapsed);
+      let selectedMode: WorklogMode = getDefaultWorklogMode(segments, elapsed);
 
       const renderReview = () => {
         clearRenderer(renderer);

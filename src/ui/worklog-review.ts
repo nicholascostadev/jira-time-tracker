@@ -7,8 +7,15 @@ export interface WorklogEntry {
   durationSeconds: number;
 }
 
-export function getDefaultWorklogMode(segments: WorklogSegment[]): WorklogMode {
-  return segments.length > 1 ? 'split' : 'single';
+export function canSplitWorklogEntries(segments: WorklogSegment[], elapsedSeconds: number): boolean {
+  return segments.length > 1 && elapsedSeconds >= 60;
+}
+
+export function getDefaultWorklogMode(
+  segments: WorklogSegment[],
+  elapsedSeconds: number
+): WorklogMode {
+  return canSplitWorklogEntries(segments, elapsedSeconds) ? 'split' : 'single';
 }
 
 export function buildWorklogsToPost(
@@ -17,7 +24,7 @@ export function buildWorklogsToPost(
   elapsedSeconds: number,
   fallbackStartedAt: number
 ): WorklogEntry[] {
-  if (mode === 'split' && segments.length > 1) {
+  if (mode === 'split' && canSplitWorklogEntries(segments, elapsedSeconds)) {
     return segments.map((segment) => ({
       startedAt: segment.startedAt,
       durationSeconds: segment.durationSeconds,
