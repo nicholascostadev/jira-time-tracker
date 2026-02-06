@@ -1,5 +1,11 @@
 # @nicholascostadev/jira-time-tracker
 
+## 0.0.2
+
+### Patch Changes
+
+- 8dd97d0: Fix release automation so binary build workflow is always triggered after a version tag is created, and add manual workflow dispatch support for rebuilding assets for an existing tag.
+
 ## 0.0.1
 
 ### Patch Changes
