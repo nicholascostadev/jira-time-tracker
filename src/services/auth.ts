@@ -18,11 +18,7 @@ export async function ensureAuthenticated(): Promise<JiraConfig> {
   const config = getJiraConfig();
 
   if (!config) {
-    console.log();
-    console.log('x not configured');
-    console.log('\x1b[90m  run "jtt config" first\x1b[0m');
-    console.log();
-    process.exit(1);
+    throw new Error('Not configured. Run "jtt config" first.');
   }
 
   // For OAuth, check if token needs refresh
@@ -30,14 +26,8 @@ export async function ensureAuthenticated(): Promise<JiraConfig> {
     const clientConfig = getOAuthClientConfig();
 
     if (!clientConfig) {
-      console.log();
-      console.log('x oauth config missing');
-      console.log('\x1b[90m  run "jtt config" to reconfigure\x1b[0m');
-      console.log();
-      process.exit(1);
+      throw new Error('OAuth client config missing. Run "jtt config" to reconfigure.');
     }
-
-    console.log('... refreshing token');
 
     try {
       const tokens = await refreshAccessToken(config.auth.refreshToken, clientConfig);
@@ -58,18 +48,13 @@ export async function ensureAuthenticated(): Promise<JiraConfig> {
 
       // Re-initialize client with new token
       initializeJiraClient(updatedConfig);
-      console.log('+ token refreshed');
 
       return updatedConfig;
     } catch (error) {
-      console.error('x failed to refresh token');
-      if (error instanceof Error) {
-        console.error(`\x1b[90m  ${error.message}\x1b[0m`);
-      }
-      console.log();
-      console.log('\x1b[90mtoken may have been revoked. run "jtt config" to re-authenticate\x1b[0m');
-      console.log();
-      process.exit(1);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(
+        `Failed to refresh OAuth token: ${message}. Token may have been revoked — run "jtt config" to re-authenticate.`
+      );
     }
   }
 
