@@ -1,5 +1,11 @@
 # @nicholascostadev/jira-time-tracker
 
+## 0.1.1
+
+### Patch Changes
+
+- 0ec0db1: Fix `jtt update` reliability for existing installs. The CLI now waits for async command completion (`parseAsync`), and updater downloads are written from `arrayBuffer` before replacing the binary with a staged rename. This prevents update hangs and ensures installed binaries are replaced correctly.
+
 ## 0.1.0
 
 ### Minor Changes

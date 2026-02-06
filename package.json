@@ -1,6 +1,6 @@
 {
   "name": "@nicholascostadev/jira-time-tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Beautiful CLI tool for tracking time and logging worklogs to Jira",
   "type": "module",
   "main": "src/index.ts",
