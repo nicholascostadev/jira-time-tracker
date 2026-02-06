@@ -21,10 +21,15 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Ensure GitHub release exists
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists"
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --generate-notes
 
   build-linux:
     runs-on: ubuntu-latest
