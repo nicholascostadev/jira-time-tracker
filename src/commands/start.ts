@@ -109,10 +109,9 @@ export async function startCommand(
       () => getIssue(issueKeyUpper)
     );
 
-    // Get description and start timer - then loop back to issue select on 'logged'
-    const description = options.description || await getDescriptionInteractive(renderer);
-    const timer = createTimer(selectedIssue.key, description);
-    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer });
+    // Start timer immediately - description is entered when stopping
+    const timer = createTimer(selectedIssue.key, '');
+    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer, defaultDescription: options.description });
 
     if (result.action === 'quit') {
       renderer.destroy();
@@ -140,12 +139,9 @@ export async function startCommand(
     // Select issue
     selectedIssue = await selectIssueInteractive(renderer, assignedIssues);
 
-    // Get description
-    const description = options.description || await getDescriptionInteractive(renderer);
-
-    // Create and start timer
-    const timer = createTimer(selectedIssue.key, description);
-    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer });
+    // Create and start timer immediately - description is entered when stopping
+    const timer = createTimer(selectedIssue.key, '');
+    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer, defaultDescription: options.description });
 
     if (result.action === 'quit') {
       renderer.destroy();
@@ -641,138 +637,4 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
   });
 }
 
-async function getDescriptionInteractive(renderer: CliRenderer): Promise<string> {
-  return new Promise(async (resolve) => {
-    let description = '';
-    let statusMessage = '';
-    let isError = false;
 
-    // Remove old keypress listeners from previous pages
-    renderer.keyInput.removeAllListeners('keypress');
-
-    const cleanup = (desc: string) => {
-      resolve(desc);
-    };
-
-    const buildUI = () => {
-      return Box(
-        {
-          width: '100%',
-          height: '100%',
-          flexDirection: 'column',
-          padding: 1,
-          backgroundColor: colors.bg,
-        },
-        // Header - minimal
-        Box(
-          {
-            width: '100%',
-            height: 3,
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderStyle: 'rounded',
-            borderColor: colors.border,
-            border: true,
-            marginBottom: 1,
-          },
-          Text({
-            content: t`${bold(fg(colors.text)('WORK DESCRIPTION'))}`,
-          })
-        ),
-        // Input
-        Box(
-          {
-            flexDirection: 'column',
-            gap: 1,
-          },
-          Text({
-            content: 'What are you working on?',
-            fg: colors.text,
-          }),
-          Box(
-            {
-              borderStyle: 'rounded',
-              borderColor: colors.borderFocused,
-              border: true,
-              height: 3,
-              width: '100%',
-            },
-            Input({
-              id: 'description-input',
-              width: '100%',
-              value: description,
-              placeholder: 'Describe your work...',
-            })
-          )
-        ),
-        // Status message
-        statusMessage
-          ? Box(
-              {
-                marginTop: 1,
-              },
-              Text({
-                content: statusMessage,
-                fg: isError ? colors.error : colors.success,
-              })
-            )
-          : Box({}),
-        // Footer - minimal
-        Box(
-          {
-            flexDirection: 'row',
-            gap: 3,
-            marginTop: 2,
-          },
-          Text({
-            content: '[enter] start',
-            fg: colors.textDim,
-          }),
-          Text({
-            content: '[esc] cancel',
-            fg: colors.textDim,
-          })
-        )
-      );
-    };
-
-    const render = () => {
-      clearRenderer(renderer);
-
-      const ui = buildUI();
-      renderer.root.add(ui);
-
-      setTimeout(() => {
-        const input = renderer.root.findDescendantById('description-input');
-        if (input) {
-          input.focus();
-        }
-      }, 50);
-    };
-
-    renderer.keyInput.on('keypress', (key: KeyEvent) => {
-      if (key.name === 'escape') {
-        renderer.destroy();
-        console.log('\nCancelled.\n');
-        process.exit(1);
-      }
-
-      if (key.name === 'return' || key.name === 'enter') {
-        const input = renderer.root.findDescendantById('description-input') as InputRenderable | undefined;
-        if (input) {
-          const value = input.value.trim();
-          if (!value) {
-            statusMessage = 'Description is required';
-            isError = true;
-            render();
-            return;
-          }
-          cleanup(value);
-        }
-      }
-    });
-
-    render();
-  });
-}

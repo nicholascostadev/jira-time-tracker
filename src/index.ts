@@ -19,12 +19,13 @@ program
   .description('Configure Jira credentials')
   .option('-s, --show', 'Show current configuration')
   .option('-c, --clear', 'Clear stored configuration')
+  .option('--default-message <message>', 'Set the default worklog message (use "" to clear)')
   .action(configCommand);
 
 program
   .command('start [issue-key]')
   .description('Start tracking time for a Jira issue (shows assigned issues if no key provided)')
-  .option('-d, --description <description>', 'Work description (will prompt if not provided)')
+  .option('-d, --description <description>', 'Pre-fill the worklog description (prompted when stopping)')
   .action(startCommand);
 
 program

@@ -2,6 +2,7 @@ import {
   createCliRenderer,
   Box,
   Text,
+  Input,
   ASCIIFont,
   measureText,
   t,
@@ -10,6 +11,7 @@ import {
   dim,
   type CliRenderer,
   type KeyEvent,
+  type InputRenderable,
 } from '@opentui/core';
 import type { TimerState, JiraIssue } from '../types/index.js';
 import {
@@ -21,7 +23,7 @@ import {
   formatTimeHumanReadable,
 } from '../services/timer.js';
 import { addWorklog } from '../services/jira.js';
-import { getActiveTimer, addFailedWorklog } from '../services/config.js';
+import { getActiveTimer, addFailedWorklog, getDefaultWorklogMessage, setDefaultWorklogMessage } from '../services/config.js';
 import { colors } from './theme.js';
 import { Spinner } from './components.js';
 
@@ -29,6 +31,7 @@ interface InteractiveTimerOptions {
   issue: JiraIssue;
   timer: TimerState;
   renderer?: CliRenderer;
+  defaultDescription?: string;
 }
 
 export type TimerResult =
@@ -80,25 +83,36 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
   return new Promise<TimerResult>((resolve) => {
     let showQuitConfirm = false;
+    let currentScreen: 'timer' | 'description' = 'timer';
+    let saveAsDefault = false;
 
     const onSigint = () => {
+      if (currentScreen === 'description') {
+        // On description screen, Ctrl+C resumes the timer
+        resumeTimer();
+        currentScreen = 'timer';
+        showQuitConfirm = false;
+        startTimerScreen();
+        return;
+      }
+
       const currentTimer = getActiveTimer();
       if (!currentTimer) {
-        void cleanup(false);
+        void quit();
         return;
       }
 
       const elapsed = getElapsedSeconds(currentTimer);
       if (elapsed >= QUIT_CONFIRM_THRESHOLD_SECONDS) {
         showQuitConfirm = true;
-        render();
+        renderTimer();
         return;
       }
 
-      void cleanup(false);
+      void quit();
     };
 
-    const cleanup = async (logTime: boolean) => {
+    const quit = async () => {
       if (isExiting) return;
       isExiting = true;
       process.removeListener('SIGINT', onSigint);
@@ -108,134 +122,48 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         updateInterval = null;
       }
 
+      stopTimer();
+
+      if (ownsRenderer) {
+        renderer.destroy();
+      }
+      resolve({ action: 'quit' });
+    };
+
+    const logWorklog = async (description: string) => {
+      if (isExiting) return;
+      isExiting = true;
+      process.removeListener('SIGINT', onSigint);
+
+      if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+      }
+
+      // Save as default if toggled
+      if (saveAsDefault) {
+        setDefaultWorklogMessage(description);
+      }
+
       const stoppedTimer = stopTimer();
 
-      if (logTime && stoppedTimer) {
-        const elapsed = getElapsedSeconds(stoppedTimer);
-        const isUnderMinimum = elapsed < 60;
-        const loggedTimeStr = isUnderMinimum ? '1 minute' : formatTimeHumanReadable(elapsed);
-        const timeStr = formatTimeHumanReadable(elapsed);
-
-        // Show logging screen in the same renderer
-        let spinnerIndex = 0;
-        const renderLogging = () => {
-          clearRenderer(renderer);
-          renderer.root.add(
-            Box(
-              {
-                width: '100%',
-                height: '100%',
-                flexDirection: 'column',
-                padding: 1,
-                backgroundColor: colors.bg,
-              },
-              Box(
-                {
-                  width: '100%',
-                  height: 3,
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderStyle: 'rounded',
-                  borderColor: colors.border,
-                  border: true,
-                  marginBottom: 1,
-                },
-                Text({
-                  content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
-                })
-              ),
-              Box(
-                {
-                  width: '100%',
-                  flexGrow: 1,
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 1,
-                  borderStyle: 'rounded',
-                  borderColor: colors.border,
-                  border: true,
-                },
-                Spinner(spinnerIndex),
-                Box(
-                  { marginTop: 1 },
-                  Text({
-                    content: `logging ${loggedTimeStr} to ${issue.key}`,
-                    fg: colors.textMuted,
-                  })
-                ),
-                ...(isUnderMinimum
-                  ? [
-                      Text({
-                        content: `tracked ${timeStr} — Jira requires a minimum of 1 minute`,
-                        fg: colors.textDim,
-                      }),
-                    ]
-                  : [])
-              )
-            )
-          );
-        };
-
-        renderLogging();
-        const loggingInterval = setInterval(() => {
-          spinnerIndex++;
-          renderLogging();
-        }, 300);
-
-        try {
-          await addWorklog(
-            stoppedTimer.issueKey,
-            elapsed,
-            stoppedTimer.description,
-            new Date(stoppedTimer.startedAt)
-          );
-        } catch (error) {
-          // Worklog failed — save to offline queue for later retry
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          addFailedWorklog({
-            issueKey: stoppedTimer.issueKey,
-            timeSpentSeconds: elapsed,
-            comment: stoppedTimer.description,
-            started: new Date(stoppedTimer.startedAt).toISOString(),
-            failedAt: Date.now(),
-            error: errorMessage,
-          });
-          clearInterval(loggingInterval);
-          clearRenderer(renderer);
-          renderer.root.add(
-            Box(
-              {
-                width: '100%',
-                height: '100%',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 1,
-                backgroundColor: colors.bg,
-              },
-              Text({
-                content: `Failed to log time: ${errorMessage}`,
-                fg: colors.error,
-              }),
-              Text({
-                content: 'The worklog has been saved offline for retry.',
-                fg: colors.textMuted,
-              })
-            )
-          );
-          await new Promise((r) => setTimeout(r, 2500));
-          if (ownsRenderer) {
-            renderer.destroy();
-          }
-          resolve({ action: 'error', message: errorMessage });
-          return;
+      if (!stoppedTimer) {
+        if (ownsRenderer) {
+          renderer.destroy();
         }
+        resolve({ action: 'quit' });
+        return;
+      }
 
-        clearInterval(loggingInterval);
+      const elapsed = getElapsedSeconds(stoppedTimer);
+      const isUnderMinimum = elapsed < 60;
+      const loggedTimeStr = isUnderMinimum ? '1 minute' : formatTimeHumanReadable(elapsed);
+      const timeStr = formatTimeHumanReadable(elapsed);
 
-        // Show success briefly
+      // Show logging screen in the same renderer
+      renderer.keyInput.removeAllListeners('keypress');
+      let spinnerIndex = 0;
+      const renderLogging = () => {
         clearRenderer(renderer);
         renderer.root.add(
           Box(
@@ -269,41 +197,326 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
+                gap: 1,
                 borderStyle: 'rounded',
-                borderColor: colors.success,
+                borderColor: colors.border,
                 border: true,
               },
-              Text({
-                content: `+ logged ${loggedTimeStr} to ${issue.key}`,
-                fg: colors.success,
-              }),
+              Spinner(spinnerIndex),
+              Box(
+                { marginTop: 1 },
+                Text({
+                  content: `logging ${loggedTimeStr} to ${issue.key}`,
+                  fg: colors.textMuted,
+                })
+              ),
               ...(isUnderMinimum
                 ? [
-                    Box(
-                      { marginTop: 1 },
-                      Text({
-                        content: `tracked ${timeStr} — rounded up to Jira's 1 minute minimum`,
-                        fg: colors.textDim,
-                      })
-                    ),
+                    Text({
+                      content: `tracked ${timeStr} — Jira requires a minimum of 1 minute`,
+                      fg: colors.textDim,
+                    }),
                   ]
                 : [])
             )
           )
         );
-        await new Promise((r) => setTimeout(r, 1500));
+      };
 
-        resolve({ action: 'logged' });
-      } else {
-        // Quit without logging
+      renderLogging();
+      const loggingInterval = setInterval(() => {
+        spinnerIndex++;
+        renderLogging();
+      }, 300);
+
+      try {
+        await addWorklog(
+          stoppedTimer.issueKey,
+          elapsed,
+          description,
+          new Date(stoppedTimer.startedAt)
+        );
+      } catch (error) {
+        // Worklog failed — save to offline queue for later retry
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        addFailedWorklog({
+          issueKey: stoppedTimer.issueKey,
+          timeSpentSeconds: elapsed,
+          comment: description,
+          started: new Date(stoppedTimer.startedAt).toISOString(),
+          failedAt: Date.now(),
+          error: errorMessage,
+        });
+        clearInterval(loggingInterval);
+        clearRenderer(renderer);
+        renderer.root.add(
+          Box(
+            {
+              width: '100%',
+              height: '100%',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1,
+              backgroundColor: colors.bg,
+            },
+            Text({
+              content: `Failed to log time: ${errorMessage}`,
+              fg: colors.error,
+            }),
+            Text({
+              content: 'The worklog has been saved offline for retry.',
+              fg: colors.textMuted,
+            })
+          )
+        );
+        await new Promise((r) => setTimeout(r, 2500));
         if (ownsRenderer) {
           renderer.destroy();
         }
-        resolve({ action: 'quit' });
+        resolve({ action: 'error', message: errorMessage });
+        return;
       }
+
+      clearInterval(loggingInterval);
+
+      // Show success briefly
+      clearRenderer(renderer);
+      renderer.root.add(
+        Box(
+          {
+            width: '100%',
+            height: '100%',
+            flexDirection: 'column',
+            padding: 1,
+            backgroundColor: colors.bg,
+          },
+          Box(
+            {
+              width: '100%',
+              height: 3,
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderStyle: 'rounded',
+              borderColor: colors.border,
+              border: true,
+              marginBottom: 1,
+            },
+            Text({
+              content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+            })
+          ),
+          Box(
+            {
+              width: '100%',
+              flexGrow: 1,
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderStyle: 'rounded',
+              borderColor: colors.success,
+              border: true,
+            },
+            Text({
+              content: `+ logged ${loggedTimeStr} to ${issue.key}`,
+              fg: colors.success,
+            }),
+            ...(isUnderMinimum
+              ? [
+                  Box(
+                    { marginTop: 1 },
+                    Text({
+                      content: `tracked ${timeStr} — rounded up to Jira's 1 minute minimum`,
+                      fg: colors.textDim,
+                    })
+                  ),
+                ]
+              : [])
+          )
+        )
+      );
+      await new Promise((r) => setTimeout(r, 1500));
+
+      resolve({ action: 'logged' });
     };
 
-    const buildUI = () => {
+    // ── Description input screen (shown after pressing [s]) ──
+
+    const buildDescriptionUI = () => {
+      const defaultToggleText = saveAsDefault
+        ? '* will save as default'
+        : '  save as default';
+
+      return Box(
+        {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          padding: 1,
+          backgroundColor: colors.bg,
+        },
+        // Header
+        Box(
+          {
+            width: '100%',
+            height: 3,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+            marginBottom: 1,
+          },
+          Text({
+            content: t`${bold(fg(colors.text)('WORK DESCRIPTION'))}`,
+          })
+        ),
+        // Input section
+        Box(
+          {
+            flexDirection: 'column',
+            gap: 1,
+          },
+          Text({
+            content: `What did you work on for ${issue.key}?`,
+            fg: colors.text,
+          }),
+          Box(
+            {
+              borderStyle: 'rounded',
+              borderColor: colors.borderFocused,
+              border: true,
+              height: 3,
+              width: '100%',
+            },
+            Input({
+              id: 'worklog-description-input',
+              width: '100%',
+              value: '',
+              placeholder: 'Describe your work...',
+            })
+          ),
+          // Save as default toggle
+          Text({
+            content: defaultToggleText,
+            fg: saveAsDefault ? colors.success : colors.textDim,
+          })
+        ),
+        // Footer hints
+        Box(
+          {
+            flexDirection: 'row',
+            gap: 3,
+            marginTop: 2,
+          },
+          Text({
+            content: '[enter] log',
+            fg: colors.textDim,
+          }),
+          Text({
+            content: '[tab] save as default',
+            fg: colors.textDim,
+          }),
+          Text({
+            content: '[esc] resume timer',
+            fg: colors.textDim,
+          })
+        )
+      );
+    };
+
+    const renderDescription = () => {
+      clearRenderer(renderer);
+      renderer.root.add(buildDescriptionUI());
+
+      setTimeout(() => {
+        const input = renderer.root.findDescendantById('worklog-description-input');
+        if (input) {
+          input.focus();
+        }
+      }, 50);
+    };
+
+    const showDescriptionScreen = () => {
+      currentScreen = 'description';
+      saveAsDefault = false;
+
+      // Pause the timer while entering description
+      const currentTimer = getActiveTimer();
+      if (currentTimer && !currentTimer.isPaused) {
+        pauseTimer();
+      }
+
+      // Stop the timer update interval
+      if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+      }
+
+      renderer.keyInput.removeAllListeners('keypress');
+
+      // Pre-fill value: CLI -d flag takes priority, then saved default
+      const prefillValue = options.defaultDescription || getDefaultWorklogMessage();
+
+      renderDescription();
+
+      // Set the pre-fill value after render
+      if (prefillValue) {
+        setTimeout(() => {
+          const input = renderer.root.findDescendantById('worklog-description-input') as InputRenderable | undefined;
+          if (input) {
+            input.value = prefillValue;
+          }
+        }, 60);
+      }
+
+      renderer.keyInput.on('keypress', (key: KeyEvent) => {
+        if (key.name === 'escape') {
+          // Resume timer and go back to timer screen
+          resumeTimer();
+          currentScreen = 'timer';
+          showQuitConfirm = false;
+          startTimerScreen();
+          return;
+        }
+
+        if (key.name === 'tab') {
+          saveAsDefault = !saveAsDefault;
+          // Re-render to update toggle text, preserving input value
+          const input = renderer.root.findDescendantById('worklog-description-input') as InputRenderable | undefined;
+          const currentValue = input?.value || '';
+          renderDescription();
+          // Restore input value
+          setTimeout(() => {
+            const newInput = renderer.root.findDescendantById('worklog-description-input') as InputRenderable | undefined;
+            if (newInput) {
+              newInput.value = currentValue;
+              newInput.focus();
+            }
+          }, 60);
+          return;
+        }
+
+        if (key.name === 'return' || key.name === 'enter') {
+          const input = renderer.root.findDescendantById('worklog-description-input') as InputRenderable | undefined;
+          if (input) {
+            const value = input.value.trim();
+            if (!value) {
+              // Don't allow empty — just ignore the enter press
+              return;
+            }
+            void logWorklog(value);
+          }
+          return;
+        }
+      });
+    };
+
+    // ── Timer screen ──
+
+    const buildTimerUI = () => {
       const currentTimer = getActiveTimer();
       if (!currentTimer) return null;
 
@@ -362,7 +575,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             border: true,
             padding: 1,
           },
-          // Issue info - compact
+          // Issue info - compact (no WORK: label since description comes later)
           Box(
             {
               flexDirection: 'column',
@@ -397,20 +610,6 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               }),
               Text({
                 content: issue.status,
-                fg: colors.textMuted,
-              })
-            ),
-            Box(
-              {
-                flexDirection: 'row',
-                gap: 1,
-              },
-              Text({
-                content: 'WORK:',
-                fg: colors.textLabel,
-              }),
-              Text({
-                content: currentTimer.description,
                 fg: colors.textMuted,
               })
             )
@@ -515,100 +714,109 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       );
     };
 
-    const render = () => {
+    const renderTimer = () => {
       if (isExiting) return;
 
       clearRenderer(renderer);
 
-      const ui = buildUI();
+      const ui = buildTimerUI();
       if (ui) {
         renderer.root.add(ui);
       }
     };
 
-    // Handle key presses
-    renderer.keyInput.on('keypress', (key: KeyEvent) => {
-      if (isExiting) return;
+    const startTimerScreen = () => {
+      currentScreen = 'timer';
 
-      const currentTimer = getActiveTimer();
-      if (!currentTimer) return;
+      renderer.keyInput.removeAllListeners('keypress');
 
-      const keyName = key.name?.toLowerCase();
+      // Handle key presses
+      renderer.keyInput.on('keypress', (key: KeyEvent) => {
+        if (isExiting) return;
 
-      switch (keyName) {
-        case 'y':
-          if (showQuitConfirm) {
-            void cleanup(false);
-          }
-          break;
+        const currentTimer = getActiveTimer();
+        if (!currentTimer) return;
 
-        case 'n':
-          if (showQuitConfirm) {
-            showQuitConfirm = false;
-            render();
-          }
-          break;
+        const keyName = key.name?.toLowerCase();
 
-        case 'p':
-          if (showQuitConfirm) {
+        switch (keyName) {
+          case 'y':
+            if (showQuitConfirm) {
+              void quit();
+            }
             break;
-          }
-          if (!currentTimer.isPaused) {
-            pauseTimer();
-            render();
-          }
-          break;
 
-        case 'r':
-          if (showQuitConfirm) {
+          case 'n':
+            if (showQuitConfirm) {
+              showQuitConfirm = false;
+              renderTimer();
+            }
             break;
-          }
-          if (currentTimer.isPaused) {
-            resumeTimer();
-            render();
-          }
-          break;
 
-        case 's':
-          if (showQuitConfirm) {
+          case 'p':
+            if (showQuitConfirm) {
+              break;
+            }
+            if (!currentTimer.isPaused) {
+              pauseTimer();
+              renderTimer();
+            }
             break;
-          }
-          cleanup(true);
-          break;
 
-        case 'q':
-        case 'escape':
-          if (showQuitConfirm) {
-            showQuitConfirm = false;
-            render();
+          case 'r':
+            if (showQuitConfirm) {
+              break;
+            }
+            if (currentTimer.isPaused) {
+              resumeTimer();
+              renderTimer();
+            }
             break;
-          }
 
-          if (getElapsedSeconds(currentTimer) >= QUIT_CONFIRM_THRESHOLD_SECONDS) {
-            showQuitConfirm = true;
-            render();
-          } else {
-            void cleanup(false);
-          }
-          break;
-      }
-    });
+          case 's':
+            if (showQuitConfirm) {
+              break;
+            }
+            showDescriptionScreen();
+            break;
+
+          case 'q':
+          case 'escape':
+            if (showQuitConfirm) {
+              showQuitConfirm = false;
+              renderTimer();
+              break;
+            }
+
+            if (getElapsedSeconds(currentTimer) >= QUIT_CONFIRM_THRESHOLD_SECONDS) {
+              showQuitConfirm = true;
+              renderTimer();
+            } else {
+              void quit();
+            }
+            break;
+        }
+      });
+
+      // Hide cursor - no text input on this screen
+      renderer.setCursorPosition(0, 0, false);
+
+      // Initial render
+      renderTimer();
+
+      // Update timer display every second
+      updateInterval = setInterval(() => {
+        if (!isExiting && currentScreen === 'timer') {
+          renderTimer();
+        }
+      }, 1000);
+    };
 
     // Handle Ctrl+C
     process.on('SIGINT', onSigint);
 
-    // Hide cursor - no text input on this screen
-    renderer.setCursorPosition(0, 0, false);
-
-    // Initial render
-    render();
-
-    // Update timer display every second
-    updateInterval = setInterval(() => {
-      if (!isExiting) {
-        render();
-      }
-    }, 1000);
+    // Start with the timer screen
+    startTimerScreen();
 
     // Start the renderer if we own it (not shared)
     if (ownsRenderer) {
