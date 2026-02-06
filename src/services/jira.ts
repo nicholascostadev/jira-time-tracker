@@ -29,30 +29,50 @@ const JiraSearchResponseSchema = z.object({
 let client: Version2Client | null = null;
 let currentConfig: JiraConfig | null = null;
 
+const DEFAULT_TIMEOUT_MS = 10000;
+const SEARCH_RETRY_ATTEMPTS = 2;
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return true;
+  }
+  return false;
+}
+
 export function initializeJiraClient(config: JiraConfig): void {
   currentConfig = config;
 
-  if (config.auth.method === 'api-token') {
-    client = new Version2Client({
-      host: config.jiraHost,
-      authentication: {
-        basic: {
-          email: config.auth.email,
-          apiToken: config.auth.apiToken,
-        },
+  client = new Version2Client({
+    host: config.jiraHost,
+    authentication: {
+      basic: {
+        email: config.auth.email,
+        apiToken: config.auth.apiToken,
       },
-    });
-  } else if (config.auth.method === 'oauth') {
-    // For OAuth, we use the Atlassian API with cloudId
-    client = new Version2Client({
-      host: `https://api.atlassian.com/ex/jira/${config.auth.cloudId}`,
-      authentication: {
-        oauth2: {
-          accessToken: config.auth.accessToken,
-        },
-      },
-    });
-  }
+    },
+  });
 }
 
 export function getJiraClient(): Version2Client {
@@ -71,20 +91,14 @@ function getAuthHeaders(): Record<string, string> {
     throw new Error('Jira client not initialized. Run "jtt config" first.');
   }
 
-  if (currentConfig.auth.method === 'api-token') {
-    const credentials = Buffer.from(
-      `${currentConfig.auth.email}:${currentConfig.auth.apiToken}`
-    ).toString('base64');
-    return {
-      Authorization: `Basic ${credentials}`,
-      'Content-Type': 'application/json',
-    };
-  } else {
-    return {
-      Authorization: `Bearer ${currentConfig.auth.accessToken}`,
-      'Content-Type': 'application/json',
-    };
-  }
+  const credentials = Buffer.from(
+    `${currentConfig.auth.email}:${currentConfig.auth.apiToken}`
+  ).toString('base64');
+
+  return {
+    Authorization: `Basic ${credentials}`,
+    'Content-Type': 'application/json',
+  };
 }
 
 function getApiBaseUrl(): string {
@@ -92,9 +106,6 @@ function getApiBaseUrl(): string {
     throw new Error('Jira client not initialized. Run "jtt config" first.');
   }
 
-  if (currentConfig.auth.method === 'oauth') {
-    return `https://api.atlassian.com/ex/jira/${currentConfig.auth.cloudId}`;
-  }
   return currentConfig.jiraHost;
 }
 
@@ -186,40 +197,56 @@ export async function getMyAssignedIssues(): Promise<JiraIssue[]> {
   const baseUrl = getApiBaseUrl();
   const headers = getAuthHeaders();
 
-  try {
-    // Use the new /rest/api/3/search/jql endpoint (POST method)
-    const response = await fetch(`${baseUrl}/rest/api/3/search/jql`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jql: 'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC',
-        fields: ['summary', 'status'],
-        maxResults: 50,
-      }),
-    });
+  for (let attempt = 0; attempt <= SEARCH_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          jql: 'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC',
+          fields: ['summary', 'status'],
+          maxResults: 50,
+        }),
+      });
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Authentication failed. Check your credentials with "jtt config"');
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication failed. Check your credentials with "jtt config"');
+        }
+
+        if (isRetryableStatus(response.status) && attempt < SEARCH_RETRY_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+          continue;
+        }
+
+        const errorText = await response.text();
+        throw new Error(`Failed to search issues: ${response.status} - ${errorText}`);
       }
-      const errorText = await response.text();
-      throw new Error(`Failed to search issues: ${response.status} - ${errorText}`);
-    }
 
-    const data = await response.json();
-    const result = JiraSearchResponseSchema.parse(data);
+      const data = await response.json();
+      const result = JiraSearchResponseSchema.parse(data);
 
-    return result.issues.map((issue) => ({
-      key: issue.key,
-      summary: issue.fields.summary ?? 'No summary',
-      status: issue.fields.status?.name ?? 'Unknown',
-    }));
-  } catch (error: unknown) {
-    if (error instanceof Error) {
-      throw error;
+      return result.issues.map((issue) => ({
+        key: issue.key,
+        summary: issue.fields.summary ?? 'No summary',
+        status: issue.fields.status?.name ?? 'Unknown',
+      }));
+    } catch (error: unknown) {
+      if (isRetryableError(error) && attempt < SEARCH_RETRY_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        continue;
+      }
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          throw new Error('Search request timed out. Please check your network and try again.');
+        }
+        throw error;
+      }
+      throw new Error('Failed to search issues');
     }
-    throw new Error('Failed to search issues');
   }
+
+  throw new Error('Failed to search issues after retries');
 }
 
 export async function getCurrentUser(): Promise<{ displayName: string; email: string }> {
