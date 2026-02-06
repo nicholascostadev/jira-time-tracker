@@ -46,6 +46,7 @@ src/
 | `jtt start [issue-key]` | Main workflow: select issue -> enter description -> timer -> log -> loop back |
 | `jtt status` | Console output of active timer state (non-interactive) |
 | `jtt resume` | Resume a persisted timer that survived terminal closure |
+| `jtt update` | Update local CLI binary from the latest GitHub Release |
 
 ## How to Run
 

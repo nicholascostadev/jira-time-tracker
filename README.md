@@ -39,9 +39,53 @@ Install latest release binary (macOS arm64 / Linux x64):
 curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
 ```
 
-Or download a binary asset manually from GitHub Releases:
+Verify install:
+
+```bash
+jtt --help
+```
+
+### Update
+
+Update to the latest release with the same installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
+```
+
+Or update directly from the installed CLI:
+
+```bash
+jtt update
+```
+
+Manual update:
+
+1. Download the newest release asset from GitHub Releases.
+2. Extract it.
+3. Replace your existing `jtt` binary on `PATH`.
+
+Download manually from GitHub Releases:
 
 - <https://github.com/nicholascostadev/jira-time-tracker/releases>
+
+If you install manually, place the binary on your `PATH` as `jtt`.
+
+Example (Linux x64):
+
+```bash
+tar -xzf jtt-vX.Y.Z-linux-x64.tar.gz
+sudo install -m 755 jtt /usr/local/bin/jtt
+```
+
+Example (macOS arm64):
+
+```bash
+tar -xzf jtt-vX.Y.Z-macos-arm64.tar.gz
+sudo install -m 755 jtt /usr/local/bin/jtt
+```
+
+Build from source (development):
 
 ```bash
 git clone https://github.com/nicholascostadev/jira-time-tracker.git
@@ -67,6 +111,12 @@ jtt --help
 Configure Jira once:
 
 ```bash
+jtt config
+```
+
+If running from source in development mode, use:
+
+```bash
 bun run dev config
 ```
 
@@ -89,24 +139,32 @@ Start tracking:
 
 ```bash
 # Pick from assigned issues
-bun run dev start
+jtt start
 
 # Direct issue key
-bun run dev start PROJ-123
+jtt start PROJ-123
 
 # With description prefilled
-bun run dev start PROJ-123 -d "Refactor timer service"
+jtt start PROJ-123 -d "Refactor timer service"
 ```
 
 Check status:
 
 ```bash
-bun run dev status
+jtt status
 ```
 
 Resume active timer:
 
 ```bash
+jtt resume
+```
+
+Development equivalents:
+
+```bash
+bun run dev start
+bun run dev status
 bun run dev resume
 ```
 
@@ -129,6 +187,7 @@ bun run dev resume
 | `start [issue-key]` | Start a tracking session |
 | `status` | Show active timer status |
 | `resume` | Resume persisted timer |
+| `update` | Update to latest released binary |
 
 ## How It Works
 
