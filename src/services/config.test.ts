@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { z } from 'zod/v4';
+import { FailedWorklogSchema } from '../types/index.js';
+
+const FailedWorklogArraySchema = z.array(FailedWorklogSchema);
 
 // Create mock store to hold values
 let mockStore: Record<string, unknown> = {};
@@ -37,6 +41,10 @@ const {
   maskApiToken,
   isOAuthTokenExpired,
   updateOAuthTokens,
+  getFailedWorklogs,
+  addFailedWorklog,
+  removeFailedWorklog,
+  clearFailedWorklogs,
 } = await import('./config.js');
 
 describe('Config Service', () => {
@@ -333,6 +341,142 @@ describe('Config Service', () => {
 
     it('should handle edge cases', () => {
       expect(maskApiToken('123456789')).toBe('1234****6789');
+    });
+  });
+
+  describe('getFailedWorklogs', () => {
+    it('should return empty array when no failed worklogs', () => {
+      expect(getFailedWorklogs()).toEqual([]);
+    });
+
+    it('should return stored failed worklogs', () => {
+      const worklogs = [
+        {
+          issueKey: 'TEST-1',
+          timeSpentSeconds: 3600,
+          comment: 'Work',
+          started: '2024-01-15T10:00:00.000Z',
+          failedAt: 1700000000000,
+          error: 'Network error',
+        },
+      ];
+      mockStore.failedWorklogs = worklogs;
+
+      expect(getFailedWorklogs()).toEqual(worklogs);
+    });
+  });
+
+  describe('addFailedWorklog', () => {
+    it('should add a worklog to an empty queue', () => {
+      mockStore.failedWorklogs = [];
+
+      const worklog = {
+        issueKey: 'TEST-1',
+        timeSpentSeconds: 3600,
+        comment: 'Work',
+        started: '2024-01-15T10:00:00.000Z',
+        failedAt: 1700000000000,
+        error: 'Network error',
+      };
+
+      addFailedWorklog(worklog);
+
+      const stored = FailedWorklogArraySchema.parse(mockStore.failedWorklogs);
+      expect(stored).toEqual([worklog]);
+    });
+
+    it('should append to existing queue', () => {
+      const existing = {
+        issueKey: 'TEST-1',
+        timeSpentSeconds: 3600,
+        comment: 'First',
+        started: '2024-01-15T10:00:00.000Z',
+        failedAt: 1700000000000,
+        error: 'Error 1',
+      };
+      mockStore.failedWorklogs = [existing];
+
+      const newWorklog = {
+        issueKey: 'TEST-2',
+        timeSpentSeconds: 1800,
+        comment: 'Second',
+        started: '2024-01-15T11:00:00.000Z',
+        failedAt: 1700000001000,
+        error: 'Error 2',
+      };
+
+      addFailedWorklog(newWorklog);
+
+      const stored = FailedWorklogArraySchema.parse(mockStore.failedWorklogs);
+      expect(stored).toHaveLength(2);
+      expect(stored[1]).toEqual(newWorklog);
+    });
+  });
+
+  describe('removeFailedWorklog', () => {
+    it('should remove worklog at specified index', () => {
+      const worklogs = [
+        {
+          issueKey: 'TEST-1',
+          timeSpentSeconds: 3600,
+          comment: 'First',
+          started: '2024-01-15T10:00:00.000Z',
+          failedAt: 1700000000000,
+          error: 'Error 1',
+        },
+        {
+          issueKey: 'TEST-2',
+          timeSpentSeconds: 1800,
+          comment: 'Second',
+          started: '2024-01-15T11:00:00.000Z',
+          failedAt: 1700000001000,
+          error: 'Error 2',
+        },
+      ];
+      mockStore.failedWorklogs = worklogs;
+
+      removeFailedWorklog(0);
+
+      const stored = FailedWorklogArraySchema.parse(mockStore.failedWorklogs);
+      expect(stored).toHaveLength(1);
+      expect(stored[0].issueKey).toBe('TEST-2');
+    });
+
+    it('should remove last worklog correctly', () => {
+      const worklogs = [
+        {
+          issueKey: 'TEST-1',
+          timeSpentSeconds: 3600,
+          comment: 'First',
+          started: '2024-01-15T10:00:00.000Z',
+          failedAt: 1700000000000,
+          error: 'Error 1',
+        },
+      ];
+      mockStore.failedWorklogs = worklogs;
+
+      removeFailedWorklog(0);
+
+      expect(mockStore.failedWorklogs).toHaveLength(0);
+    });
+  });
+
+  describe('clearFailedWorklogs', () => {
+    it('should clear the entire queue', () => {
+      mockStore.failedWorklogs = [
+        {
+          issueKey: 'TEST-1',
+          timeSpentSeconds: 3600,
+          comment: 'Work',
+          started: '2024-01-15T10:00:00.000Z',
+          failedAt: 1700000000000,
+          error: 'Error',
+        },
+      ];
+
+      clearFailedWorklogs();
+
+      expect(mockStore.failedWorklogs).toEqual([]);
     });
   });
 });
