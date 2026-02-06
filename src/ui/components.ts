@@ -27,7 +27,7 @@ export function Header(): ReturnType<typeof Box> {
       border: true,
     },
     Text({
-      content: t`${bold(fg(colors.text)('jira time tracker'))}`,
+      content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
     })
   );
 }
@@ -203,6 +203,30 @@ export function LoadingText(message: string): ReturnType<typeof Box> {
       content: message,
       fg: colors.textDim,
     })
+  );
+}
+
+/**
+ * Creates a large animated spinner using 3 bouncing dots.
+ * Each dot is a 3-wide × 2-tall block. Pass a frame index that increments over time.
+ */
+export function Spinner(frameIndex: number): ReturnType<typeof Box> {
+  const DOT = '███';
+  const activeIndex = frameIndex % 3;
+
+  return Box(
+    {
+      flexDirection: 'row',
+      gap: 2,
+      alignItems: 'center',
+    },
+    ...[0, 1, 2].map((i) =>
+      Box(
+        { flexDirection: 'column' },
+        Text({ content: DOT, fg: i === activeIndex ? colors.text : colors.textDim }),
+        Text({ content: DOT, fg: i === activeIndex ? colors.text : colors.textDim }),
+      )
+    )
   );
 }
 
