@@ -447,7 +447,6 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
         ? [
             { text: '[enter] select' },
             { text: '[←→/tab] filter status' },
-            { text: '[/] search' },
             { text: '[x] clear filters' },
             { text: '[↑↓] navigate' },
             { text: '[esc] cancel' },
@@ -618,18 +617,6 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
           if (searchQuery || statusFilterIndex >= 0) {
             searchQuery = '';
             statusFilterIndex = -1;
-            render();
-          }
-          return;
-        }
-
-        if (key.sequence === '/') {
-          if (!searchQuery) {
-            statusMessage = 'search: type to filter issues';
-            isError = false;
-            render();
-          } else {
-            searchQuery += '/';
             render();
           }
           return;
