@@ -22,14 +22,41 @@ import {
   formatTime,
 } from '../services/timer.js';
 import { runInteractiveTimer } from '../ui/interactive.js';
+import { Spinner } from '../ui/components.js';
 import type { JiraIssue } from '../types/index.js';
-import { colors } from '../ui/theme.js';
+import { colors, getStatusColors, isDoneStatus } from '../ui/theme.js';
+import { retryFailedWorklogs } from '../services/worklog-queue.js';
+import { getFailedWorklogs } from '../services/config.js';
 
 interface StartOptions {
   description?: string;
 }
 
 const ENTER_CUSTOM_KEY = '__custom__';
+
+/**
+ * Creates a shared renderer that will be reused across all interactive screens
+ * to avoid flickering when transitioning between pages.
+ */
+async function createSharedRenderer(): Promise<CliRenderer> {
+  return await createCliRenderer({
+    exitOnCtrlC: true,
+    useAlternateScreen: true,
+    backgroundColor: colors.bg,
+  });
+}
+
+/**
+ * Clears all children from the renderer root, preparing for a new page.
+ */
+function clearRenderer(renderer: CliRenderer): void {
+  while (renderer.root.getChildrenCount() > 0) {
+    const children = renderer.root.getChildren();
+    if (children.length > 0) {
+      renderer.root.remove(children[0].id);
+    }
+  }
+}
 
 export async function startCommand(
   issueKey: string | undefined,
@@ -52,104 +79,233 @@ export async function startCommand(
   }
 
   // Ensure authenticated
-  await ensureAuthenticated();
+  try {
+    await ensureAuthenticated();
+  } catch (error) {
+    console.log();
+    console.log(`x ${error instanceof Error ? error.message : 'Authentication failed'}`);
+    console.log();
+    process.exit(1);
+  }
+
+  // Retry any failed worklogs from the offline queue
+  const pendingWorklogs = getFailedWorklogs();
+  if (pendingWorklogs.length > 0) {
+    const result = await retryFailedWorklogs();
+    if (result.succeeded > 0) {
+      console.log(`+ retried ${result.succeeded} pending worklog(s)`);
+    }
+    if (result.failed > 0) {
+      console.log(`\x1b[90m  ${result.failed} worklog(s) still pending\x1b[0m`);
+    }
+  }
 
   let selectedIssue: JiraIssue;
+
+  // Create shared renderer for the entire interactive flow
+  const renderer = await createSharedRenderer();
 
   // If issue key provided directly, validate and use it
   if (issueKey) {
     const issueKeyUpper = issueKey.toUpperCase();
     if (!/^[A-Z]+-\d+$/.test(issueKeyUpper)) {
-      console.log(`x invalid issue key: ${issueKey}`);
-      console.log('\x1b[90m  expected: PROJECT-123\x1b[0m');
-      console.log();
-      process.exit(1);
+      showErrorScreen(renderer, `Invalid issue key: ${issueKey}. Expected format: PROJECT-123`);
+      return;
     }
 
-    console.log(`\n... fetching ${issueKeyUpper}`);
-    try {
-      selectedIssue = await getIssue(issueKeyUpper);
-      console.log(`+ ${selectedIssue.key} - ${selectedIssue.summary}`);
-    } catch (error) {
-      console.error('x failed to fetch issue');
-      if (error instanceof Error) {
-        console.error(`\x1b[90m  ${error.message}\x1b[0m`);
-      }
-      console.log();
-      process.exit(1);
-    }
+    // Show loading while fetching issue
+    selectedIssue = await showLoadingScreen(
+      renderer,
+      `fetching ${issueKeyUpper}`,
+      () => getIssue(issueKeyUpper)
+    );
 
-    // Get description and start timer
-    const description = options.description || await getDescriptionInteractive();
+    // Get description and start timer - then loop back to issue select on 'logged'
+    const description = options.description || await getDescriptionInteractive(renderer);
     const timer = createTimer(selectedIssue.key, description);
-    await runInteractiveTimer({ issue: selectedIssue, timer });
-    return;
-  }
+    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer });
 
-  // No issue key - show interactive selection
-  console.log('\n... fetching assigned issues');
-
-  let assignedIssues: JiraIssue[];
-  let userName: string;
-
-  try {
-    const [issues, user] = await Promise.all([getMyAssignedIssues(), getCurrentUser()]);
-    assignedIssues = issues;
-    userName = user.displayName;
-    console.log(`+ ${userName}`);
-  } catch (error) {
-    console.error('x failed to fetch issues');
-    if (error instanceof Error) {
-      console.error(`\x1b[90m  ${error.message}\x1b[0m`);
+    if (result.action === 'quit') {
+      renderer.destroy();
+      console.log('\nTimer cancelled. Time was not logged.\n');
+      process.exit(0);
     }
-    console.log();
-    process.exit(1);
+
+    if (result.action === 'error') {
+      // Worklog failed but was queued — continue to issue selection
+    }
+
+    // If logged or error, fall through to the interactive loop below
   }
 
-  // Start interactive UI for issue selection
-  selectedIssue = await selectIssueInteractive(assignedIssues);
-  
-  // Get description
-  const description = options.description || await getDescriptionInteractive();
-  
-  // Create and start timer
-  const timer = createTimer(selectedIssue.key, description);
-  await runInteractiveTimer({ issue: selectedIssue, timer });
+  // Main interactive loop: select issue → describe → track → log → repeat
+  while (true) {
+    // Fetch assigned issues
+    const fetchResult = await showLoadingScreen(
+      renderer,
+      'fetching assigned issues',
+      () => Promise.all([getMyAssignedIssues(), getCurrentUser()])
+    );
+    const assignedIssues = fetchResult[0];
+
+    // Select issue
+    selectedIssue = await selectIssueInteractive(renderer, assignedIssues);
+
+    // Get description
+    const description = options.description || await getDescriptionInteractive(renderer);
+
+    // Create and start timer
+    const timer = createTimer(selectedIssue.key, description);
+    const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer });
+
+    if (result.action === 'quit') {
+      renderer.destroy();
+      console.log('\nTimer cancelled. Time was not logged.\n');
+      process.exit(0);
+    }
+
+    // If 'logged' or 'error', loop continues → re-fetch issues → select next task
+  }
 }
 
-async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<JiraIssue> {
-  return new Promise(async (resolve, reject) => {
-    let renderer: CliRenderer;
+async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: JiraIssue[]): Promise<JiraIssue> {
+  return new Promise(async (resolve) => {
     let currentStep: 'select' | 'manual-input' = 'select';
-    let manualKey = '';
+    let searchQuery = '';
     let statusMessage = '';
     let isError = false;
 
-    try {
-      renderer = await createCliRenderer({
-        exitOnCtrlC: true,
-        useAlternateScreen: true,
-        backgroundColor: colors.bg,
-      });
-    } catch (error) {
-      console.error('Failed to initialize UI:', error);
-      process.exit(1);
+    // Filter out done issues
+    const activeIssues = assignedIssues.filter((i) => !isDoneStatus(i.status));
+
+    // Build unique status list from actual issues (for Tab filter)
+    const allStatuses: string[] = [];
+    for (const issue of activeIssues) {
+      const s = issue.status.toLowerCase();
+      if (!allStatuses.includes(s)) {
+        allStatuses.push(s);
+      }
     }
+    // 'all' is index -1 (no filter)
+    let statusFilterIndex = -1;
+
+    // Remove old keypress listeners from previous pages
+    renderer.keyInput.removeAllListeners('keypress');
 
     const cleanup = (issue?: JiraIssue) => {
-      renderer.destroy();
       if (issue) {
         resolve(issue);
       } else {
+        renderer.destroy();
         console.log('\nCancelled.\n');
         process.exit(1);
       }
     };
 
+    const getFilteredOptions = () => {
+      const query = searchQuery.toLowerCase();
+      const activeStatus = statusFilterIndex >= 0 ? allStatuses[statusFilterIndex] : null;
+
+      const filtered = activeIssues
+        .filter((issue) => {
+          // Status filter
+          if (activeStatus && issue.status.toLowerCase() !== activeStatus) {
+            return false;
+          }
+          // Text search
+          if (query) {
+            return (
+              issue.key.toLowerCase().includes(query) ||
+              issue.summary.toLowerCase().includes(query) ||
+              issue.status.toLowerCase().includes(query)
+            );
+          }
+          return true;
+        })
+        .map((issue) => ({
+          name: `${issue.key} - ${issue.summary}`,
+          description: issue.status.toLowerCase(),
+          value: issue.key,
+        }));
+
+      // Always add manual entry option at the end
+      filtered.push({
+        name: '[ enter issue key ]',
+        description: 'type a custom key',
+        value: ENTER_CUSTOM_KEY,
+      });
+
+      return filtered;
+    };
+
+    const getSearchFilteredIssues = () => {
+      const query = searchQuery.toLowerCase();
+      if (!query) return activeIssues;
+      return activeIssues.filter(
+        (issue) =>
+          issue.key.toLowerCase().includes(query) ||
+          issue.summary.toLowerCase().includes(query) ||
+          issue.status.toLowerCase().includes(query)
+      );
+    };
+
+    const buildStatusPills = () => {
+      const pills: ReturnType<typeof Box>[] = [];
+      const searchFiltered = getSearchFilteredIssues();
+
+      // "All" pill — count reflects search-matched issues
+      const allActive = statusFilterIndex === -1;
+      pills.push(
+        Box(
+          {
+            backgroundColor: allActive ? colors.text : colors.bgSelected,
+            paddingLeft: 1,
+            paddingRight: 1,
+          },
+          Text({
+            content: `ALL ${searchFiltered.length}`,
+            fg: allActive ? colors.bg : colors.textMuted,
+          })
+        )
+      );
+
+      // Status pills — each count reflects search-matched issues within that status
+      for (let i = 0; i < allStatuses.length; i++) {
+        const status = allStatuses[i];
+        const count = searchFiltered.filter((iss) => iss.status.toLowerCase() === status).length;
+        const active = statusFilterIndex === i;
+        const statusColors = getStatusColors(status);
+
+        pills.push(
+          Box(
+            {
+              backgroundColor: active ? statusColors.fg : statusColors.bg,
+              paddingLeft: 1,
+              paddingRight: 1,
+            },
+            Text({
+              content: `${status.toUpperCase()} ${count}`,
+              fg: active ? colors.bg : statusColors.fg,
+            })
+          )
+        );
+      }
+
+      return Box(
+        {
+          flexDirection: 'row',
+          gap: 1,
+          marginBottom: 1,
+          flexWrap: 'wrap',
+        },
+        ...pills
+      );
+    };
+
     const buildUI = () => {
       const children: ReturnType<typeof Box>[] = [];
 
-      // Header - minimal
+      // Header
       children.push(
         Box(
           {
@@ -164,32 +320,59 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('select issue'))}`,
+            content: t`${bold(fg(colors.text)('SELECT ISSUE'))}`,
           })
         )
       );
 
       if (currentStep === 'select') {
-        // Build options list
-        const options = assignedIssues.map((issue) => ({
-          name: `${issue.key} - ${issue.summary}`,
-          description: issue.status.toLowerCase(),
-          value: issue.key,
-        }));
+        // Status filter pills
+        if (allStatuses.length > 0) {
+          children.push(buildStatusPills());
+        }
 
-        // Add manual entry option
-        options.push({
-          name: '[ enter issue key ]',
-          description: 'type a custom key',
-          value: ENTER_CUSTOM_KEY,
-        });
+        // Search input
+        children.push(
+          Box(
+            {
+              borderStyle: 'rounded',
+              borderColor: colors.borderFocused,
+              border: true,
+              height: 3,
+              width: '100%',
+              marginBottom: 1,
+            },
+            Text({
+              content: searchQuery
+                ? searchQuery + '█'
+                : '█ type to search...',
+              fg: searchQuery ? colors.text : colors.textDim,
+            })
+          )
+        );
 
-        if (assignedIssues.length === 0) {
+        const options = getFilteredOptions();
+
+        // "No results" messages
+        const hasResults = options.length > 1;
+        if (!hasResults && (searchQuery || statusFilterIndex >= 0)) {
           children.push(
             Box(
-              {
-                marginBottom: 1,
-              },
+              { marginBottom: 1 },
+              Text({
+                content: searchQuery
+                  ? `no issues matching "${searchQuery}"`
+                  : `no issues with status "${allStatuses[statusFilterIndex]}"`,
+                fg: colors.textMuted,
+              })
+            )
+          );
+        }
+
+        if (activeIssues.length === 0 && !searchQuery) {
+          children.push(
+            Box(
+              { marginBottom: 1 },
               Text({
                 content: 'no assigned issues found',
                 fg: colors.textMuted,
@@ -198,6 +381,7 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
           );
         }
 
+        const listHeight = Math.min(options.length * 2 + 2, 18);
         children.push(
           Box(
             {
@@ -206,16 +390,21 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
               borderColor: colors.border,
               border: true,
               padding: 1,
-              height: Math.min(options.length * 2 + 4, 20),
+              height: listHeight + 2,
             },
             Select({
               id: 'issue-select',
-              width: 70,
-              height: Math.min(options.length * 2 + 2, 18),
+              width: '100%',
+              height: listHeight,
               options,
+              backgroundColor: colors.bg,
+              textColor: colors.text,
+              focusedBackgroundColor: colors.bg,
+              focusedTextColor: colors.text,
               selectedBackgroundColor: colors.text,
-              selectedTextColor: '#000000',
+              selectedTextColor: colors.bg,
               descriptionColor: colors.textDim,
+              selectedDescriptionColor: colors.bgHighlight,
               showScrollIndicator: true,
             })
           )
@@ -238,12 +427,12 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 40,
+                width: '100%',
               },
               Input({
                 id: 'issue-key-input',
-                width: 38,
-                value: manualKey,
+                width: '100%',
+                value: '',
                 placeholder: 'PROJECT-123',
               })
             )
@@ -255,9 +444,7 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
       if (statusMessage) {
         children.push(
           Box(
-            {
-              marginTop: 1,
-            },
+            { marginTop: 1 },
             Text({
               content: statusMessage,
               fg: isError ? colors.error : colors.success,
@@ -266,7 +453,19 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
         );
       }
 
-      // Footer hints - minimal
+      // Footer hints
+      const hints = currentStep === 'select'
+        ? [
+            { text: '[enter] select' },
+            { text: '[←→/tab] filter status' },
+            { text: '[↑↓] navigate' },
+            { text: '[esc] cancel' },
+          ]
+        : [
+            { text: '[enter] select' },
+            { text: '[esc] back' },
+          ];
+
       children.push(
         Box(
           {
@@ -274,14 +473,12 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
             gap: 3,
             marginTop: 2,
           },
-          Text({
-            content: '[enter] select',
-            fg: colors.textDim,
-          }),
-          Text({
-            content: '[esc] cancel',
-            fg: colors.textDim,
-          })
+          ...hints.map((h) =>
+            Text({
+              content: h.text,
+              fg: colors.textDim,
+            })
+          )
         )
       );
 
@@ -298,34 +495,30 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
     };
 
     const render = () => {
-      while (renderer.root.getChildrenCount() > 0) {
-        const children = renderer.root.getChildren();
-        if (children.length > 0) {
-          renderer.root.remove(children[0].id);
-        }
-      }
+      clearRenderer(renderer);
 
       const ui = buildUI();
       renderer.root.add(ui);
 
-      setTimeout(() => {
-        const elementId = currentStep === 'select' ? 'issue-select' : 'issue-key-input';
-        const element = renderer.root.findDescendantById(elementId);
-        if (element) {
-          element.focus();
-        }
-      }, 50);
+      if (currentStep === 'manual-input') {
+        setTimeout(() => {
+          const element = renderer.root.findDescendantById('issue-key-input');
+          if (element) {
+            element.focus();
+          }
+        }, 50);
+      }
     };
 
     const handleSelectIssue = async (issueKey: string) => {
       if (issueKey === ENTER_CUSTOM_KEY) {
         currentStep = 'manual-input';
+        searchQuery = '';
         render();
         return;
       }
 
-      // Find the issue in the list
-      const issue = assignedIssues.find((i) => i.key === issueKey);
+      const issue = activeIssues.find((i) => i.key === issueKey);
       if (issue) {
         cleanup(issue);
       }
@@ -360,6 +553,11 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
           currentStep = 'select';
           statusMessage = '';
           render();
+        } else if (searchQuery || statusFilterIndex >= 0) {
+          // Clear filters first
+          searchQuery = '';
+          statusFilterIndex = -1;
+          render();
         } else {
           cleanup();
         }
@@ -381,34 +579,79 @@ async function selectIssueInteractive(assignedIssues: JiraIssue[]): Promise<Jira
             handleManualKey(input.value);
           }
         }
+        return;
+      }
+
+      // Select step: handle search, navigation, and status filter
+      if (currentStep === 'select') {
+        // Tab / Right cycles forward, Shift+Tab / Left cycles backward through status filters
+        if (key.name === 'tab' || key.name === 'right' || key.name === 'left') {
+          if (allStatuses.length > 0) {
+            if (key.name === 'left' || (key.name === 'tab' && key.shift)) {
+              statusFilterIndex--;
+              if (statusFilterIndex < -1) {
+                statusFilterIndex = allStatuses.length - 1;
+              }
+            } else {
+              statusFilterIndex++;
+              if (statusFilterIndex >= allStatuses.length) {
+                statusFilterIndex = -1; // back to "all"
+              }
+            }
+            render();
+          }
+          return;
+        }
+
+        if (key.name === 'up') {
+          const select = renderer.root.findDescendantById('issue-select') as SelectRenderable;
+          if (select) select.moveUp();
+          return;
+        }
+
+        if (key.name === 'down') {
+          const select = renderer.root.findDescendantById('issue-select') as SelectRenderable;
+          if (select) select.moveDown();
+          return;
+        }
+
+        if (key.name === 'backspace') {
+          if (searchQuery.length > 0) {
+            searchQuery = searchQuery.slice(0, -1);
+            render();
+          }
+          return;
+        }
+
+        // Printable character — append to search
+        if (
+          key.sequence &&
+          key.sequence.length === 1 &&
+          !key.ctrl &&
+          !key.meta &&
+          key.sequence.charCodeAt(0) >= 32
+        ) {
+          searchQuery += key.sequence;
+          render();
+          return;
+        }
       }
     });
 
     render();
-    renderer.start();
   });
 }
 
-async function getDescriptionInteractive(): Promise<string> {
+async function getDescriptionInteractive(renderer: CliRenderer): Promise<string> {
   return new Promise(async (resolve) => {
-    let renderer: CliRenderer;
     let description = '';
     let statusMessage = '';
     let isError = false;
 
-    try {
-      renderer = await createCliRenderer({
-        exitOnCtrlC: true,
-        useAlternateScreen: true,
-        backgroundColor: colors.bg,
-      });
-    } catch (error) {
-      console.error('Failed to initialize UI:', error);
-      process.exit(1);
-    }
+    // Remove old keypress listeners from previous pages
+    renderer.keyInput.removeAllListeners('keypress');
 
     const cleanup = (desc: string) => {
-      renderer.destroy();
       resolve(desc);
     };
 
@@ -435,7 +678,7 @@ async function getDescriptionInteractive(): Promise<string> {
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('work description'))}`,
+            content: t`${bold(fg(colors.text)('WORK DESCRIPTION'))}`,
           })
         ),
         // Input
@@ -445,7 +688,7 @@ async function getDescriptionInteractive(): Promise<string> {
             gap: 1,
           },
           Text({
-            content: 'what are you working on?',
+            content: 'What are you working on?',
             fg: colors.text,
           }),
           Box(
@@ -454,11 +697,11 @@ async function getDescriptionInteractive(): Promise<string> {
               borderColor: colors.borderFocused,
               border: true,
               height: 3,
-              width: 60,
+              width: '100%',
             },
             Input({
               id: 'description-input',
-              width: 58,
+              width: '100%',
               value: description,
               placeholder: 'Describe your work...',
             })
@@ -496,12 +739,7 @@ async function getDescriptionInteractive(): Promise<string> {
     };
 
     const render = () => {
-      while (renderer.root.getChildrenCount() > 0) {
-        const children = renderer.root.getChildren();
-        if (children.length > 0) {
-          renderer.root.remove(children[0].id);
-        }
-      }
+      clearRenderer(renderer);
 
       const ui = buildUI();
       renderer.root.add(ui);
@@ -537,6 +775,194 @@ async function getDescriptionInteractive(): Promise<string> {
     });
 
     render();
-    renderer.start();
+  });
+}
+
+/**
+ * Shows a loading screen with a spinner. If the task fails, shows an error
+ * screen with [r] retry / [q] quit options — never exits the TUI.
+ */
+async function showLoadingScreen<T>(
+  renderer: CliRenderer,
+  message: string,
+  task: () => Promise<T>
+): Promise<T> {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let spinnerIndex = 0;
+    let spinnerInterval: Timer | null = null;
+
+    // Remove old keypress listeners from previous pages
+    renderer.keyInput.removeAllListeners('keypress');
+
+    const buildLoadingUI = () => {
+      return Box(
+        {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          padding: 1,
+          backgroundColor: colors.bg,
+        },
+        Box(
+          {
+            width: '100%',
+            height: 3,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+            marginBottom: 1,
+          },
+          Text({
+            content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+          })
+        ),
+        Box(
+          {
+            width: '100%',
+            flexGrow: 1,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+          },
+          Spinner(spinnerIndex),
+          Box(
+            { marginTop: 1 },
+            Text({
+              content: message,
+              fg: colors.textMuted,
+            })
+          )
+        )
+      );
+    };
+
+    const renderLoading = () => {
+      clearRenderer(renderer);
+      renderer.root.add(buildLoadingUI());
+    };
+
+    renderLoading();
+
+    spinnerInterval = setInterval(() => {
+      spinnerIndex++;
+      renderLoading();
+    }, 300);
+
+    try {
+      const result = await task();
+      clearInterval(spinnerInterval);
+      return result;
+    } catch (error) {
+      if (spinnerInterval) {
+        clearInterval(spinnerInterval);
+      }
+
+      // Show error screen — stay in the TUI
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const userAction = await showErrorScreen(renderer, errorMessage);
+
+      if (userAction === 'retry') {
+        // Loop will retry the task
+        continue;
+      } else {
+        // Quit
+        renderer.destroy();
+        console.log('\nCancelled.\n');
+        process.exit(1);
+      }
+    }
+  }
+}
+
+/**
+ * Shows an error screen with [r] retry / [q] quit options.
+ * Returns 'retry' or 'quit' based on user input.
+ */
+function showErrorScreen(renderer: CliRenderer, errorMessage: string): Promise<'retry' | 'quit'> {
+  return new Promise((resolve) => {
+    renderer.keyInput.removeAllListeners('keypress');
+
+    const buildUI = () => {
+      return Box(
+        {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          padding: 1,
+          backgroundColor: colors.bg,
+        },
+        Box(
+          {
+            width: '100%',
+            height: 3,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderStyle: 'rounded',
+            borderColor: colors.border,
+            border: true,
+            marginBottom: 1,
+          },
+          Text({
+            content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+          })
+        ),
+        Box(
+          {
+            width: '100%',
+            flexGrow: 1,
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+            borderStyle: 'rounded',
+            borderColor: colors.error,
+            border: true,
+          },
+          Text({
+            content: 'SOMETHING WENT WRONG',
+            fg: colors.error,
+          }),
+          Text({
+            content: errorMessage,
+            fg: colors.textMuted,
+          }),
+          Box(
+            {
+              flexDirection: 'row',
+              gap: 3,
+              marginTop: 1,
+            },
+            Text({
+              content: '[r] retry',
+              fg: colors.text,
+            }),
+            Text({
+              content: '[q] quit',
+              fg: colors.textDim,
+            })
+          )
+        )
+      );
+    };
+
+    clearRenderer(renderer);
+    renderer.root.add(buildUI());
+
+    renderer.keyInput.on('keypress', (key: KeyEvent) => {
+      const keyName = key.name?.toLowerCase();
+      if (keyName === 'r') {
+        resolve('retry');
+      } else if (keyName === 'q' || keyName === 'escape') {
+        resolve('quit');
+      }
+    });
   });
 }
