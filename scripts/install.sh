@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="nicholascostadev/jira-time-tracker"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 os_name="$(uname -s)"
 arch_name="$(uname -m)"
@@ -65,3 +65,13 @@ install -m 755 "$tmp_dir/jtt" "$INSTALL_DIR/jtt"
 
 echo "Installed jtt to $INSTALL_DIR/jtt"
 echo "Run: jtt --help"
+
+case ":$PATH:" in
+  *":$INSTALL_DIR:"*) ;;
+  *)
+    echo
+    echo "Note: $INSTALL_DIR is not in your PATH."
+    echo "Add this line to your shell profile:"
+    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    ;;
+esac

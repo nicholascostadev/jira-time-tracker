@@ -36,7 +36,15 @@ Create your API token at:
 Install latest release binary (macOS arm64 / Linux x64) to your user directory:
 
 ```bash
-INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
+```
+
+The installer defaults to `$HOME/.local/bin`.
+
+To override install path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | INSTALL_DIR="/custom/bin" bash
 ```
 
 If needed, add it to your `PATH`:
@@ -56,7 +64,7 @@ jtt --help
 Update to the latest release with the same installer:
 
 ```bash
-INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
 ```
 
 Or update directly from the installed CLI:
