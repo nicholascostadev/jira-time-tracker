@@ -25,8 +25,36 @@ import {
 } from '../services/config.js';
 import { initializeJiraClient, testConnection } from '../services/jira.js';
 import { startOAuthFlow, getCallbackUrl } from '../services/oauth.js';
-import type { AuthMethod } from '../types/index.js';
+import type { AuthMethod, JiraCloudResource } from '../types/index.js';
 import { colors } from '../ui/theme.js';
+import { spawn } from 'child_process';
+
+const API_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
+
+function copyToClipboard(text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const platform = process.platform;
+    let cmd: string;
+    let args: string[];
+
+    if (platform === 'darwin') {
+      cmd = 'pbcopy';
+      args = [];
+    } else if (platform === 'win32') {
+      cmd = 'clip';
+      args = [];
+    } else {
+      cmd = 'xclip';
+      args = ['-selection', 'clipboard'];
+    }
+
+    const proc = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+    proc.stdin?.write(text);
+    proc.stdin?.end();
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error('Failed to copy'))));
+    proc.on('error', reject);
+  });
+}
 
 interface ConfigOptions {
   show?: boolean;
@@ -84,7 +112,7 @@ function clearConfig(): void {
   console.log();
 }
 
-type ConfigStep = 'auth-method' | 'jira-host' | 'email' | 'api-token' | 'testing' | 'oauth-client-id' | 'oauth-client-secret' | 'oauth-flow' | 'done';
+type ConfigStep = 'auth-method' | 'jira-host' | 'email' | 'api-token' | 'testing' | 'oauth-client-id' | 'oauth-client-secret' | 'oauth-flow' | 'site-select' | 'done';
 
 async function interactiveConfig(): Promise<void> {
   const existingConfig = getJiraConfig();
@@ -99,6 +127,8 @@ async function interactiveConfig(): Promise<void> {
   let oauthClientSecret = '';
   let statusMessage = '';
   let isError = false;
+  let availableSites: JiraCloudResource[] = [];
+  let siteSelectResolver: ((site: JiraCloudResource | null) => void) | null = null;
 
   try {
     renderer = await createCliRenderer({
@@ -116,7 +146,7 @@ async function interactiveConfig(): Promise<void> {
     if (!success) {
       console.log('\nConfiguration cancelled.\n');
     }
-    process.exit(success ? 0 : 1);
+    drainAndExit(success ? 0 : 1);
   };
 
   const buildUI = () => {
@@ -137,7 +167,7 @@ async function interactiveConfig(): Promise<void> {
           marginBottom: 1,
         },
         Text({
-          content: t`${bold(fg(colors.text)('configuration'))}`,
+          content: t`${bold(fg(colors.text)('CONFIGURATION'))}`,
         })
       )
     );
@@ -178,15 +208,20 @@ async function interactiveConfig(): Promise<void> {
             },
             Select({
               id: 'auth-method-select',
-              width: 50,
+              width: '100%',
               height: 6,
               options: [
                 { name: 'API Token', description: 'recommended for personal use', value: 'api-token' },
                 { name: 'OAuth 2.0', description: 'recommended for shared/team use', value: 'oauth' },
               ],
+              backgroundColor: colors.bg,
+              textColor: colors.text,
+              focusedBackgroundColor: colors.bg,
+              focusedTextColor: colors.text,
               selectedBackgroundColor: colors.text,
-              selectedTextColor: '#000000',
+              selectedTextColor: colors.bg,
               descriptionColor: colors.textDim,
+              selectedDescriptionColor: colors.bgHighlight,
             })
           )
         );
@@ -209,11 +244,11 @@ async function interactiveConfig(): Promise<void> {
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 60,
+                width: '100%',
               },
               Input({
                 id: 'jira-host-input',
-                width: 58,
+                width: '100%',
                 value: jiraHost,
                 placeholder: 'https://yourcompany.atlassian.net',
               })
@@ -239,11 +274,11 @@ async function interactiveConfig(): Promise<void> {
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 60,
+                width: '100%',
               },
               Input({
                 id: 'email-input',
-                width: 58,
+                width: '100%',
                 value: email,
                 placeholder: 'your.email@company.com',
                 
@@ -264,21 +299,31 @@ async function interactiveConfig(): Promise<void> {
               content: 'Enter your Jira API token:',
               fg: colors.text,
             }),
-            Text({
-              content: 'Create one at: https://id.atlassian.com/manage-profile/security/api-tokens',
-              fg: colors.info,
-            }),
+            Box(
+              {
+                flexDirection: 'row',
+                gap: 1,
+              },
+              Text({
+                content: `Create one at: ${API_TOKEN_URL}`,
+                fg: colors.info,
+              }),
+              Text({
+                content: process.platform === 'darwin' ? '[cmd+c] copy url' : '[alt+c] copy url',
+                fg: colors.textDim,
+              })
+            ),
             Box(
               {
                 borderStyle: 'rounded',
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 60,
+                width: '100%',
               },
               Input({
                 id: 'api-token-input',
-                width: 58,
+                width: '100%',
                 value: apiToken,
                 placeholder: 'Your API token',
                 
@@ -329,11 +374,11 @@ async function interactiveConfig(): Promise<void> {
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 60,
+                width: '100%',
               },
               Input({
                 id: 'oauth-client-id-input',
-                width: 58,
+                width: '100%',
                 value: oauthClientId,
                 placeholder: 'Client ID',
                 
@@ -360,11 +405,11 @@ async function interactiveConfig(): Promise<void> {
                 borderColor: colors.borderFocused,
                 border: true,
                 height: 3,
-                width: 60,
+                width: '100%',
               },
               Input({
                 id: 'oauth-client-secret-input',
-                width: 58,
+                width: '100%',
                 value: oauthClientSecret,
                 placeholder: 'Client Secret',
                 
@@ -427,6 +472,44 @@ async function interactiveConfig(): Promise<void> {
         );
         break;
 
+      case 'site-select':
+        children.push(
+          Box(
+            {
+              flexDirection: 'column',
+              borderStyle: 'rounded',
+              borderColor: colors.border,
+              border: true,
+              padding: 1,
+              title: ' Select Jira Site ',
+            },
+            Text({
+              content: `${availableSites.length} Jira sites found. Choose one:`,
+              fg: colors.textMuted,
+              id: 'site-select-label',
+            }),
+            Select({
+              id: 'site-select',
+              width: '100%',
+              height: Math.min(availableSites.length * 2 + 2, 16),
+              options: availableSites.map((site) => ({
+                name: site.name,
+                description: site.url,
+                value: site.id,
+              })),
+              backgroundColor: colors.bg,
+              textColor: colors.text,
+              focusedBackgroundColor: colors.bg,
+              focusedTextColor: colors.text,
+              selectedBackgroundColor: colors.text,
+              selectedTextColor: colors.bg,
+              descriptionColor: colors.textDim,
+              selectedDescriptionColor: colors.bgHighlight,
+            })
+          )
+        );
+        break;
+
       case 'done':
         children.push(
           Box(
@@ -441,6 +524,10 @@ async function interactiveConfig(): Promise<void> {
             Text({
               content: `Config file: ${getConfigPath()}`,
               fg: colors.textMuted,
+            }),
+            Text({
+              content: 'press any key to exit',
+              fg: colors.textDim,
             })
           )
         );
@@ -463,7 +550,7 @@ async function interactiveConfig(): Promise<void> {
     }
 
     // Footer hints - minimal
-    if (currentStep !== 'testing' && currentStep !== 'oauth-flow' && currentStep !== 'done') {
+    if (currentStep !== 'testing' && currentStep !== 'oauth-flow' && currentStep !== 'done' && currentStep !== 'site-select') {
       children.push(
         Box(
           {
@@ -529,6 +616,9 @@ async function interactiveConfig(): Promise<void> {
         case 'oauth-client-secret':
           elementId = 'oauth-client-secret-input';
           break;
+        case 'site-select':
+          elementId = 'site-select';
+          break;
       }
       if (elementId) {
         const element = renderer.root.findDescendantById(elementId);
@@ -573,7 +663,9 @@ async function interactiveConfig(): Promise<void> {
     currentStep = 'done';
     render();
 
-    setTimeout(() => cleanup(true), 2000);
+    // Wait for user keypress to exit (avoids setTimeout + process.exit race)
+    renderer.keyInput.removeAllListeners('keypress');
+    renderer.keyInput.on('keypress', () => cleanup(true));
   };
 
   const processOAuthFlow = async () => {
@@ -589,6 +681,15 @@ async function interactiveConfig(): Promise<void> {
       const result = await startOAuthFlow({
         clientId: oauthClientId,
         clientSecret: oauthClientSecret,
+        siteSelector: async (sites) => {
+          availableSites = sites;
+          currentStep = 'site-select';
+          render();
+
+          return new Promise<JiraCloudResource | null>((resolveSite) => {
+            siteSelectResolver = resolveSite;
+          });
+        },
       });
 
       const config = {
@@ -613,7 +714,9 @@ async function interactiveConfig(): Promise<void> {
     currentStep = 'done';
     render();
 
-    setTimeout(() => cleanup(true), 2000);
+    // Wait for user keypress to exit (avoids setTimeout + process.exit race)
+    renderer.keyInput.removeAllListeners('keypress');
+    renderer.keyInput.on('keypress', () => cleanup(true));
   };
 
   // Handle input submission
@@ -697,6 +800,29 @@ async function interactiveConfig(): Promise<void> {
       return;
     }
 
+    // Copy API token URL: Cmd+C on Mac, Alt+C on other platforms
+    if (currentStep === 'api-token' && key.name === 'c') {
+      const isCopyShortcut =
+        process.platform === 'darwin' ? key.meta : key.option || key.meta;
+
+      if (isCopyShortcut) {
+        key.preventDefault();
+        key.stopPropagation();
+        copyToClipboard(API_TOKEN_URL)
+          .then(() => {
+            statusMessage = 'URL copied to clipboard';
+            isError = false;
+            render();
+          })
+          .catch(() => {
+            statusMessage = 'Failed to copy URL to clipboard';
+            isError = true;
+            render();
+          });
+        return;
+      }
+    }
+
     if (key.name === 'return' || key.name === 'enter') {
       if (currentStep === 'auth-method') {
         const select = renderer.root.findDescendantById('auth-method-select') as SelectRenderable;
@@ -710,6 +836,17 @@ async function interactiveConfig(): Promise<void> {
             currentStep = 'oauth-client-id';
           }
           render();
+        }
+        return;
+      }
+
+      if (currentStep === 'site-select') {
+        const select = renderer.root.findDescendantById('site-select') as SelectRenderable;
+        if (select && siteSelectResolver) {
+          const option = select.getSelectedOption();
+          const site = availableSites.find((s) => s.id === option?.value);
+          siteSelectResolver(site ?? null);
+          siteSelectResolver = null;
         }
         return;
       }
@@ -733,4 +870,18 @@ async function interactiveConfig(): Promise<void> {
   // Initial render
   render();
   renderer.start();
+}
+
+function drainAndExit(code: number): void {
+  if (!process.stdin.isTTY) { process.exit(code); return; }
+  try {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', () => {});
+    setTimeout(() => {
+      try { process.stdin.setRawMode(false); } catch {}
+      process.stdin.pause();
+      process.exit(code);
+    }, 200);
+  } catch { process.exit(code); }
 }
