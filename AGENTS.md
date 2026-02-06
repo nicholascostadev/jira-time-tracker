@@ -60,6 +60,19 @@ bun run typecheck           # Type checking
 bun run test                # Run tests
 ```
 
+## Git Workflow & Releases
+
+- Never push directly to `main`.
+- Every code or documentation change must be done on a branch and proposed via Pull Request.
+- Preferred flow for contributors and agents:
+  1. Create a new branch from `main`
+  2. Make changes
+  3. Add a changeset with `bun run changeset` when the change should be released
+  4. Open a PR to `main`
+  5. After PR merge, let Changesets create/update the release PR
+  6. Merge the release PR to publish a new version
+- Do not merge PRs automatically unless explicitly requested by the user/repository maintainer.
+
 ## Architecture & Key Patterns
 
 ### TUI Rendering (OpenTUI)
