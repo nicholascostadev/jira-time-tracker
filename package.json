@@ -1,5 +1,5 @@
 {
-  "name": "jira-time-tracker",
+  "name": "@nicholascostadev/jira-time-tracker",
   "version": "2.0.0",
   "description": "Beautiful CLI tool for tracking time and logging worklogs to Jira",
   "type": "module",
@@ -26,6 +26,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@opentui/core": "^0.1.77",
     "commander": "^14.0.3",
