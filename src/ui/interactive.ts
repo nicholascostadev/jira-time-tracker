@@ -142,6 +142,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       return new Date(timestamp).toLocaleTimeString([], {
         hour: 'numeric',
         minute: '2-digit',
+        second: '2-digit',
       });
     };
 
@@ -503,6 +504,95 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
           }];
 
       const singleRounded = elapsed < 60;
+      const singleSelected = selectedMode === 'single';
+      const splitSelected = selectedMode === 'split';
+
+      const singleCard = Box(
+        {
+          flexGrow: 1,
+          flexDirection: 'column',
+          borderStyle: 'rounded',
+          borderColor: singleSelected ? colors.borderActive : colors.border,
+          border: true,
+          padding: 1,
+          backgroundColor: singleSelected ? colors.bgHighlight : colors.bg,
+          title: singleSelected ? ' \u25CF Single Entry ' : ' \u25CB Single Entry ',
+          gap: 1,
+        },
+        Text({
+          content: 'Log all time as one worklog entry',
+          fg: singleSelected ? colors.textMuted : colors.textDim,
+        }),
+        Box(
+          { flexDirection: 'column', gap: 0 },
+          Text({
+            content: `${formatClock(previewSegments[0].startedAt)}  ->  ${formatClock(previewSegments[previewSegments.length - 1].endedAt)}`,
+            fg: singleSelected ? colors.text : colors.textDim,
+          }),
+          Text({
+            content: formatTimeHumanReadable(elapsed < 60 ? 60 : elapsed),
+            fg: singleSelected ? colors.textMuted : colors.textDim,
+          })
+        ),
+        ...(singleRounded ? [
+          Text({
+            content: '! rounded to 1m minimum',
+            fg: colors.warning,
+          })
+        ] : [])
+      );
+
+      const splitCard = Box(
+        {
+          flexGrow: 1,
+          flexDirection: 'column',
+          borderStyle: 'rounded',
+          borderColor: splitSelected && hasSplitOptions ? colors.borderActive : colors.border,
+          border: true,
+          padding: 1,
+          backgroundColor: splitSelected && hasSplitOptions ? colors.bgHighlight : colors.bg,
+          title: hasSplitOptions
+            ? (splitSelected ? ' \u25CF Split Entries ' : ' \u25CB Split Entries ')
+            : ' \u25CB Split Entries ',
+          gap: 1,
+        },
+        ...(hasSplitOptions
+          ? [
+              Text({
+                content: `Log as ${previewSegments.length} separate worklog entries`,
+                fg: splitSelected ? colors.textMuted : colors.textDim,
+              }),
+              ...previewSegments.map((segment, index) => {
+                const rounded = segment.durationSeconds < 60;
+                return Box(
+                  { flexDirection: 'column', gap: 0 },
+                  Text({
+                    content: `${index + 1}. ${formatClock(segment.startedAt)}  ->  ${formatClock(segment.endedAt)}`,
+                    fg: splitSelected ? colors.text : colors.textDim,
+                  }),
+                  Text({
+                    content: `   ${formatTimeHumanReadable(segment.durationSeconds < 60 ? 60 : segment.durationSeconds)}${rounded ? ' (rounded)' : ''}`,
+                    fg: splitSelected ? colors.textMuted : colors.textDim,
+                  })
+                );
+              })
+            ]
+          : [
+              Text({
+                content: 'Not available',
+                fg: colors.textDim,
+              }),
+              Text({
+                content: 'Requires pauses to create',
+                fg: colors.textDim,
+              }),
+              Text({
+                content: 'multiple time segments',
+                fg: colors.textDim,
+              }),
+            ]
+        )
+      );
 
       return Box(
         {
@@ -531,40 +621,37 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         Box(
           {
             width: '100%',
-            flexGrow: 1,
             flexDirection: 'column',
-            borderStyle: 'rounded',
-            borderColor: colors.border,
-            border: true,
-            padding: 1,
-            gap: 1,
+            paddingLeft: 2,
+            paddingRight: 2,
+            gap: 0,
+            marginBottom: 1,
           },
-          Text({ content: `Issue: ${issue.key}`, fg: colors.text }),
-          Text({ content: `Description: ${description}`, fg: colors.textMuted }),
-          Text({ content: `Total tracked: ${formatTimeHumanReadable(elapsed)}`, fg: colors.text }),
-          Text({
-            content: selectedMode === 'single' ? '* single entry' : '  single entry',
-            fg: selectedMode === 'single' ? colors.success : colors.textDim,
-          }),
-          Text({
-            content: `  ${formatClock(previewSegments[0].startedAt)} -> ${formatClock(previewSegments[previewSegments.length - 1].endedAt)} (${formatTimeHumanReadable(elapsed < 60 ? 60 : elapsed)})${singleRounded ? ' rounded if under 60s' : ''}`,
-            fg: colors.textDim,
-          }),
-          Text({
-            content: hasSplitOptions
-              ? (selectedMode === 'split' ? '* split entries' : '  split entries')
-              : `  split entries (requires >= 1m total)`,
-            fg: hasSplitOptions
-              ? (selectedMode === 'split' ? colors.success : colors.textDim)
-              : colors.textDim,
-          }),
-          ...previewSegments.map((segment, index) => {
-            const rounded = segment.durationSeconds < 60;
-            return Text({
-              content: `  ${index + 1}. ${formatClock(segment.startedAt)} -> ${formatClock(segment.endedAt)} (${formatTimeHumanReadable(segment.durationSeconds < 60 ? 60 : segment.durationSeconds)})${rounded ? ' rounded' : ''}`,
-              fg: colors.textDim,
-            });
-          })
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: 'ISSUE'.padEnd(14), fg: colors.textDim }),
+            Text({ content: t`${bold(issue.key)}`, fg: colors.text })
+          ),
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: 'DESCRIPTION'.padEnd(14), fg: colors.textDim }),
+            Text({ content: description || '(none)', fg: colors.textMuted })
+          ),
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: 'TOTAL TIME'.padEnd(14), fg: colors.textDim }),
+            Text({ content: formatTimeHumanReadable(elapsed), fg: colors.text })
+          )
+        ),
+        Box(
+          {
+            width: '100%',
+            flexDirection: 'row',
+            gap: 2,
+            flexGrow: 1,
+          },
+          singleCard,
+          splitCard
         ),
         Box(
           {
@@ -572,12 +659,24 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             gap: 3,
             marginTop: 1,
           },
-          Text({ content: '[enter] confirm', fg: colors.textDim }),
-          Text({
-            content: hasSplitOptions ? '[tab] toggle single/split' : '[tab] no split available',
-            fg: colors.textDim,
-          }),
-          Text({ content: '[esc] back', fg: colors.textDim })
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: '[enter]', fg: colors.text }),
+            Text({ content: 'confirm', fg: colors.textDim })
+          ),
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: '[tab/\u2190\u2192]', fg: colors.text }),
+            Text({
+              content: hasSplitOptions ? 'toggle single/split' : 'split unavailable',
+              fg: colors.textDim,
+            })
+          ),
+          Box(
+            { flexDirection: 'row', gap: 1 },
+            Text({ content: '[esc]', fg: colors.text }),
+            Text({ content: 'back', fg: colors.textDim })
+          )
         )
       );
     };
