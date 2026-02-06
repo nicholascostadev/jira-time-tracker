@@ -1,3 +1,5 @@
+import { z } from 'zod/v4';
+
 export type AuthMethod = 'api-token' | 'oauth';
 
 export interface ApiTokenAuth {
@@ -72,3 +74,41 @@ export interface WorklogResult {
   started: string;
   comment: string;
 }
+
+export interface FailedWorklog {
+  issueKey: string;
+  timeSpentSeconds: number;
+  comment: string;
+  started: string;
+  failedAt: number;
+  error: string;
+}
+
+// ── Zod Schemas ──────────────────────────────────────────────────────────────
+
+export const OAuthTokenResponseSchema = z.object({
+  access_token: z.string(),
+  refresh_token: z.string(),
+  expires_in: z.number(),
+  scope: z.string(),
+  token_type: z.string(),
+});
+
+export const JiraCloudResourceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  scopes: z.array(z.string()),
+  avatarUrl: z.string(),
+});
+
+export const FailedWorklogSchema = z.object({
+  issueKey: z.string(),
+  timeSpentSeconds: z.number(),
+  comment: z.string(),
+  started: z.string(),
+  failedAt: z.number(),
+  error: z.string(),
+});
+
+export const AuthMethodSchema = z.enum(['api-token', 'oauth']);

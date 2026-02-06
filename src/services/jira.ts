@@ -1,5 +1,30 @@
 import { Version2Client } from 'jira.js';
+import { z } from 'zod/v4';
 import type { JiraConfig, JiraIssue, WorklogResult } from '../types/index.js';
+
+// ── Zod schemas for Jira API response shapes ────────────────────────────────
+
+const JiraStatusFieldSchema = z.object({
+  name: z.optional(z.string()),
+}).optional();
+
+const JiraErrorResponseSchema = z.object({
+  response: z.optional(z.object({
+    status: z.optional(z.number()),
+  })),
+});
+
+const JiraSearchResponseSchema = z.object({
+  issues: z.array(z.object({
+    key: z.string(),
+    fields: z.object({
+      summary: z.optional(z.string()),
+      status: JiraStatusFieldSchema,
+    }),
+  })).default([]),
+  isLast: z.optional(z.boolean()),
+  nextPageToken: z.optional(z.string()),
+});
 
 let client: Version2Client | null = null;
 let currentConfig: JiraConfig | null = null;
@@ -82,18 +107,20 @@ export async function getIssue(issueKey: string): Promise<JiraIssue> {
       fields: ['summary', 'status'],
     });
 
+    const status = JiraStatusFieldSchema.safeParse(issue.fields.status);
     return {
       key: issue.key!,
       summary: issue.fields.summary ?? 'No summary',
-      status: (issue.fields.status as { name?: string })?.name ?? 'Unknown',
+      status: (status.success && status.data?.name) ? status.data.name : 'Unknown',
     };
   } catch (error: unknown) {
-    if (error instanceof Error && 'response' in error) {
-      const response = (error as { response?: { status?: number } }).response;
-      if (response?.status === 404) {
+    const parsed = JiraErrorResponseSchema.safeParse(error);
+    if (parsed.success && parsed.data.response?.status) {
+      const httpStatus = parsed.data.response.status;
+      if (httpStatus === 404) {
         throw new Error(`Issue ${issueKey} not found`);
       }
-      if (response?.status === 401) {
+      if (httpStatus === 401) {
         throw new Error('Authentication failed. Check your credentials with "jtt config"');
       }
     }
@@ -128,12 +155,13 @@ export async function addWorklog(
       comment,
     };
   } catch (error: unknown) {
-    if (error instanceof Error && 'response' in error) {
-      const response = (error as { response?: { status?: number } }).response;
-      if (response?.status === 401) {
+    const parsed = JiraErrorResponseSchema.safeParse(error);
+    if (parsed.success && parsed.data.response?.status) {
+      const httpStatus = parsed.data.response.status;
+      if (httpStatus === 401) {
         throw new Error('Authentication failed. Check your credentials with "jtt config"');
       }
-      if (response?.status === 403) {
+      if (httpStatus === 403) {
         throw new Error(
           'Permission denied. You may not have permission to log work on this issue.'
         );
@@ -152,20 +180,6 @@ export async function testConnection(): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-interface JiraSearchResponse {
-  issues: Array<{
-    key: string;
-    fields: {
-      summary?: string;
-      status?: {
-        name?: string;
-      };
-    };
-  }>;
-  isLast?: boolean;
-  nextPageToken?: string;
 }
 
 export async function getMyAssignedIssues(): Promise<JiraIssue[]> {
@@ -192,9 +206,10 @@ export async function getMyAssignedIssues(): Promise<JiraIssue[]> {
       throw new Error(`Failed to search issues: ${response.status} - ${errorText}`);
     }
 
-    const result = (await response.json()) as JiraSearchResponse;
+    const data = await response.json();
+    const result = JiraSearchResponseSchema.parse(data);
 
-    return (result.issues ?? []).map((issue) => ({
+    return result.issues.map((issue) => ({
       key: issue.key,
       summary: issue.fields.summary ?? 'No summary',
       status: issue.fields.status?.name ?? 'Unknown',
