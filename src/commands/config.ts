@@ -16,6 +16,8 @@ import {
   clearJiraConfig,
   getConfigPath,
   maskApiToken,
+  getDefaultWorklogMessage,
+  setDefaultWorklogMessage,
 } from '../services/config.js';
 import { initializeJiraClient, testConnection } from '../services/jira.js';
 import { colors } from '../ui/theme.js';
@@ -51,6 +53,7 @@ function copyToClipboard(text: string): Promise<void> {
 interface ConfigOptions {
   show?: boolean;
   clear?: boolean;
+  defaultMessage?: string;
 }
 
 type ConfigStep = 'jira-host' | 'email' | 'api-token' | 'testing' | 'done';
@@ -66,11 +69,17 @@ export async function configCommand(options: ConfigOptions): Promise<void> {
     return;
   }
 
+  if (options.defaultMessage !== undefined) {
+    setDefaultMessage(options.defaultMessage);
+    return;
+  }
+
   await interactiveConfig();
 }
 
 function showConfig(): void {
   const config = getJiraConfig();
+  const defaultMsg = getDefaultWorklogMessage();
 
   console.log();
   console.log('\x1b[1mjira time tracker configuration\x1b[0m');
@@ -80,14 +89,27 @@ function showConfig(): void {
   if (!config) {
     console.log('\x1b[90mNot configured. Run "jtt config" to set up.\x1b[0m');
   } else {
-    console.log(`\x1b[90mhost\x1b[0m  ${config.jiraHost}`);
-    console.log('\x1b[90mauth\x1b[0m  api-token');
-    console.log(`\x1b[90memail\x1b[0m ${config.auth.email}`);
-    console.log(`\x1b[90mtoken\x1b[0m ${maskApiToken(config.auth.apiToken)}`);
+    console.log(`\x1b[90mhost\x1b[0m     ${config.jiraHost}`);
+    console.log('\x1b[90mauth\x1b[0m     api-token');
+    console.log(`\x1b[90memail\x1b[0m    ${config.auth.email}`);
+    console.log(`\x1b[90mtoken\x1b[0m    ${maskApiToken(config.auth.apiToken)}`);
+    console.log(`\x1b[90mdefault\x1b[0m  ${defaultMsg || '\x1b[90m(not set)\x1b[0m'}`);
   }
 
   console.log();
   console.log(`\x1b[90m${getConfigPath()}\x1b[0m`);
+  console.log();
+}
+
+function setDefaultMessage(message: string): void {
+  const trimmed = message.trim();
+  setDefaultWorklogMessage(trimmed);
+  console.log();
+  if (trimmed) {
+    console.log(`+ default worklog message set to: "${trimmed}"`);
+  } else {
+    console.log('+ default worklog message cleared');
+  }
   console.log();
 }
 

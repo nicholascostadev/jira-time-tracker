@@ -40,6 +40,8 @@ const {
   addFailedWorklog,
   removeFailedWorklog,
   clearFailedWorklogs,
+  getDefaultWorklogMessage,
+  setDefaultWorklogMessage,
 } = await import('./config.js');
 
 describe('Config Service', () => {
@@ -144,6 +146,25 @@ describe('Config Service', () => {
     it('masks api token', () => {
       expect(maskApiToken('abcd1234efgh5678')).toBe('abcd****5678');
       expect(maskApiToken('short')).toBe('****');
+    });
+  });
+
+  describe('default worklog message', () => {
+    it('returns empty string by default', () => {
+      expect(getDefaultWorklogMessage()).toBe('');
+    });
+
+    it('sets and returns default worklog message', () => {
+      setDefaultWorklogMessage('Working on feature');
+      expect(getDefaultWorklogMessage()).toBe('Working on feature');
+    });
+
+    it('clears default worklog message when set to empty string', () => {
+      setDefaultWorklogMessage('Some message');
+      expect(getDefaultWorklogMessage()).toBe('Some message');
+
+      setDefaultWorklogMessage('');
+      expect(getDefaultWorklogMessage()).toBe('');
     });
   });
 

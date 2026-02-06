@@ -42,8 +42,8 @@ src/
 
 | Command | Description |
 |---|---|
-| `jtt config` | Interactive API token setup wizard. `--show` prints config, `--clear` deletes it. |
-| `jtt start [issue-key]` | Main workflow: select issue -> enter description -> timer -> log -> loop back |
+| `jtt config` | Interactive API token setup wizard. `--show` prints config, `--clear` deletes it, `--default-message` sets/clears default worklog message. |
+| `jtt start [issue-key]` | Main workflow: select issue -> timer -> stop -> enter description -> log -> loop back |
 | `jtt status` | Console output of active timer state (non-interactive) |
 | `jtt resume` | Resume a persisted timer that survived terminal closure |
 | `jtt update` | Update local CLI binary from the latest GitHub Release |
@@ -91,7 +91,7 @@ The TUI uses `@opentui/core` with this pattern throughout:
 
 ### Shared Renderer Pattern
 
-The `start` command creates **one renderer** reused across all screens (loading -> issue select -> description input -> timer -> success -> back to select). This eliminates flickering between page transitions. Each screen removes prior listeners with `renderer.keyInput.removeAllListeners('keypress')` and calls `clearRenderer()` before building its own UI.
+The `start` command creates **one renderer** reused across all screens (loading -> issue select -> timer -> description input -> success -> back to select). This eliminates flickering between page transitions. Each screen removes prior listeners with `renderer.keyInput.removeAllListeners('keypress')` and calls `clearRenderer()` before building its own UI.
 
 The `resume` and `config` commands each create their own renderers.
 
@@ -104,6 +104,15 @@ After rendering, a `setTimeout(fn, 50)` finds target components by string ID via
 `startCommand` wraps the full flow in a `while(true)` loop. After the timer logs a worklog, it shows a success screen, re-fetches issues, and returns to issue selection — rather than exiting.
 
 `runInteractiveTimer` returns `{ action: 'logged' | 'quit' | 'error' }` — the loop continues on `'logged'`/`'error'` and exits on `'quit'`.
+
+### Description After Timer
+
+The worklog description is entered **after** the timer is stopped, not before it starts. When the user presses `[s]` to stop:
+1. The timer pauses
+2. A description input screen appears (pre-filled with CLI `-d` value or saved default message)
+3. `[tab]` toggles "save as default" — persists the message for future sessions
+4. `[enter]` submits the description and posts the worklog
+5. `[esc]` cancels and resumes the timer (no time lost)
 
 ### Timer Persistence
 
@@ -167,12 +176,13 @@ Preset style objects (`boxStyles`, `selectStyles`, `inputStyles`) are spread int
 ## Interactive Timer (`src/ui/interactive.ts`)
 
 The timer screen shows:
-- Issue info (key, status, description) with uppercase labels
+- Issue info (key, status) with uppercase labels
 - Running/paused status badge
 - Large ASCII clock where each digit is rendered in a fixed-width cell (prevents layout shifts)
 - Key hints: `[p] pause`, `[r] resume`, `[s] stop & log`, `[q] quit`
 
-On stop & log: shows spinner -> posts worklog -> shows success screen -> returns `{ action: 'logged' }`.
+On stop & log: pauses timer -> shows description input (pre-filled with default) -> posts worklog -> shows success screen -> returns `{ action: 'logged' }`.
+On description cancel (`[esc]`): resumes the timer (no time lost).
 On worklog failure: saves to offline queue -> shows error screen -> returns `{ action: 'error' }`.
 
 ## Issue Selection (`src/commands/start.ts`)

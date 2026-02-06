@@ -9,6 +9,7 @@ interface ConfigSchema {
   apiToken: string;
   activeTimer: TimerState | null;
   failedWorklogs: FailedWorklog[];
+  defaultWorklogMessage: string;
 }
 
 const config = new Conf<ConfigSchema>({
@@ -33,6 +34,10 @@ const config = new Conf<ConfigSchema>({
     failedWorklogs: {
       type: 'array',
       default: [],
+    },
+    defaultWorklogMessage: {
+      type: 'string',
+      default: '',
     },
   },
 });
@@ -128,4 +133,12 @@ export function maskApiToken(token: string): string {
     return '****';
   }
   return token.slice(0, 4) + '****' + token.slice(-4);
+}
+
+export function getDefaultWorklogMessage(): string {
+  return config.get('defaultWorklogMessage') || '';
+}
+
+export function setDefaultWorklogMessage(message: string): void {
+  config.set('defaultWorklogMessage', message);
 }

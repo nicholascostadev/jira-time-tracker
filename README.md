@@ -147,6 +147,22 @@ bun run dev config --show
 bun run dev config --clear
 ```
 
+### Default worklog message
+
+Set a default description that pre-fills the worklog prompt when you stop a timer:
+
+```bash
+jtt config --default-message "Working on task"
+```
+
+Clear it:
+
+```bash
+jtt config --default-message ""
+```
+
+You can also toggle "save as default" directly from the description prompt when stopping a timer (press `Tab`).
+
 ## Usage
 
 Start tracking:
@@ -158,7 +174,7 @@ jtt start
 # Direct issue key
 jtt start PROJ-123
 
-# With description prefilled
+# Pre-fill the worklog description (prompted when you stop)
 jtt start PROJ-123 -d "Refactor timer service"
 ```
 
@@ -188,17 +204,27 @@ bun run dev resume
 |---|---|
 | `p` | Pause |
 | `r` | Resume |
-| `s` | Stop and log |
+| `s` | Stop — opens description prompt, then logs |
 | `q` | Quit (with confirmation when enough time is tracked) |
+
+### Description prompt keys (after pressing `s`)
+
+| Key | Action |
+|---|---|
+| `Enter` | Submit description and log worklog |
+| `Tab` | Toggle "save as default" |
+| `Esc` | Cancel and resume the timer |
 
 ## Commands
 
 | Command | Description |
 |---|---|
 | `config` | Configure Jira credentials |
-| `config --show` | Show current config (token masked) |
+| `config --show` | Show current config (token masked, default message) |
 | `config --clear` | Clear stored credentials |
+| `config --default-message <msg>` | Set default worklog message (use `""` to clear) |
 | `start [issue-key]` | Start a tracking session |
+| `start -d <description>` | Pre-fill the worklog description |
 | `status` | Show active timer status |
 | `resume` | Resume persisted timer |
 | `update` | Update to latest released binary |
@@ -213,9 +239,10 @@ Core flow:
 
 1. Validate configuration and initialize Jira client
 2. Optionally retry queued offline worklogs
-3. Select issue and description
+3. Select issue
 4. Track time in full-screen TUI
-5. Submit worklog to Jira (minimum 60 seconds enforced)
+5. Enter worklog description when stopping (pre-filled with default if set)
+6. Submit worklog to Jira (minimum 60 seconds enforced)
 
 ## Development
 
