@@ -209,6 +209,20 @@ bun run test:watch
 bun test src/services/timer.test.ts
 ```
 
+### Releases and versioning
+
+This project uses [Changesets](https://github.com/changesets/changesets) for release management.
+
+```bash
+# create a changeset for your PR
+bun run changeset
+
+# apply pending version updates locally (optional)
+bun run version-packages
+```
+
+When changes are merged into `main`, the release workflow creates or updates a version PR. Merging that PR publishes the package and updates release notes.
+
 ## Configuration File
 
 The configuration is stored in:
