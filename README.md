@@ -33,6 +33,16 @@ Create your API token at:
 
 ## Installation
 
+Install latest release binary (macOS arm64 / Linux x64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nicholascostadev/jira-time-tracker/main/scripts/install.sh | bash
+```
+
+Or download a binary asset manually from GitHub Releases:
+
+- <https://github.com/nicholascostadev/jira-time-tracker/releases>
+
 ```bash
 git clone https://github.com/nicholascostadev/jira-time-tracker.git
 cd jira-time-tracker
@@ -160,7 +170,7 @@ bun run changeset
 bun run version-packages
 ```
 
-When changes are merged into `main`, the release workflow creates or updates a version PR. Merging that PR publishes the package and updates release notes.
+When changes are merged into `main`, the release workflow creates or updates a version PR. Merging that PR creates a git tag, builds platform binaries, and publishes them as GitHub Release assets.
 
 
 ## Troubleshooting
