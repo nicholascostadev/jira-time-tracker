@@ -204,16 +204,24 @@ bun run dev resume
 |---|---|
 | `p` | Pause |
 | `r` | Resume |
-| `s` | Stop — opens description prompt, then logs |
+| `s` | Stop — opens description prompt, then review |
 | `q` | Quit (with confirmation when enough time is tracked) |
 
 ### Description prompt keys (after pressing `s`)
 
 | Key | Action |
 |---|---|
-| `Enter` | Submit description and log worklog |
+| `Enter` | Submit description and open review |
 | `Tab` | Toggle "save as default" |
 | `Esc` | Cancel and resume the timer |
+
+### Worklog review keys (after description submit)
+
+| Key | Action |
+|---|---|
+| `Enter` | Confirm and log worklog(s) |
+| `Tab` / `Left` / `Right` | Toggle single vs split entries |
+| `Esc` | Back to description |
 
 ## Commands
 
@@ -242,7 +250,8 @@ Core flow:
 3. Select issue
 4. Track time in full-screen TUI
 5. Enter worklog description when stopping (pre-filled with default if set)
-6. Submit worklog to Jira (minimum 60 seconds enforced)
+6. Review single-entry vs split-entry posting (split defaults when multiple segments exist)
+7. Submit worklog(s) to Jira (minimum 60 seconds enforced per entry)
 
 ## Development
 

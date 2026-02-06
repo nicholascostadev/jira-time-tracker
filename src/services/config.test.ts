@@ -123,6 +123,7 @@ describe('Config Service', () => {
         startedAt: Date.now(),
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now(), endedAt: null }],
         isPaused: false,
         isRunning: true,
       };

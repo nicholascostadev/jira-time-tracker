@@ -5,6 +5,7 @@ import {
   resumeTimer,
   stopTimer,
   getElapsedSeconds,
+  getWorklogSegments,
   formatTime,
   formatTimeHumanReadable,
   getCurrentTimer,
@@ -42,6 +43,7 @@ describe('Timer Service', () => {
         startedAt: now,
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: now, endedAt: null }],
         isPaused: false,
         isRunning: true,
       });
@@ -61,6 +63,7 @@ describe('Timer Service', () => {
         startedAt: now - 60000, // Started 1 minute ago
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: now - 60000, endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -72,6 +75,7 @@ describe('Timer Service', () => {
       expect(result).not.toBeNull();
       expect(result?.isPaused).toBe(true);
       expect(result?.pausedAt).toBe(now);
+      expect(result?.intervals).toEqual([{ startedAt: now - 60000, endedAt: now }]);
     });
 
     it('should return null if no active timer', () => {
@@ -89,6 +93,7 @@ describe('Timer Service', () => {
         startedAt: Date.now() - 60000,
         pausedAt: Date.now(),
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now() - 60000, endedAt: Date.now() }],
         isPaused: true,
         isRunning: true,
       };
@@ -115,6 +120,7 @@ describe('Timer Service', () => {
         startedAt: startTime,
         pausedAt: pauseTime,
         totalPausedTime: 0,
+        intervals: [{ startedAt: startTime, endedAt: pauseTime }],
         isPaused: true,
         isRunning: true,
       };
@@ -127,6 +133,10 @@ describe('Timer Service', () => {
       expect(result?.isPaused).toBe(false);
       expect(result?.pausedAt).toBeNull();
       expect(result?.totalPausedTime).toBe(30000); // 30 seconds paused
+      expect(result?.intervals).toEqual([
+        { startedAt: startTime, endedAt: pauseTime },
+        { startedAt: resumeTime, endedAt: null },
+      ]);
     });
 
     it('should return null if timer not paused', () => {
@@ -136,6 +146,7 @@ describe('Timer Service', () => {
         startedAt: Date.now() - 60000,
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now() - 60000, endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -153,12 +164,15 @@ describe('Timer Service', () => {
       const mockTimer = {
         issueKey: 'TEST-123',
         description: 'Test',
-        startedAt: Date.now() - 60000,
+        startedAt: 940000,
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: 940000, endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
+
+      vi.setSystemTime(1000000);
 
       vi.mocked(configService.getActiveTimer).mockReturnValue(mockTimer);
 
@@ -166,6 +180,7 @@ describe('Timer Service', () => {
 
       expect(result).not.toBeNull();
       expect(result?.isRunning).toBe(false);
+      expect(result?.intervals).toEqual([{ startedAt: 940000, endedAt: 1000000 }]);
       expect(configService.clearActiveTimer).toHaveBeenCalled();
     });
 
@@ -179,6 +194,7 @@ describe('Timer Service', () => {
         startedAt: now - 120000, // 2 minutes ago
         pausedAt: now - 30000, // Paused 30 seconds ago
         totalPausedTime: 10000, // Already 10 seconds paused before
+        intervals: [{ startedAt: now - 120000, endedAt: now - 30000 }],
         isPaused: true,
         isRunning: true,
       };
@@ -210,6 +226,7 @@ describe('Timer Service', () => {
         startedAt: now - 120000, // 2 minutes ago
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: now - 120000, endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -227,6 +244,7 @@ describe('Timer Service', () => {
         startedAt: now - 120000, // 2 minutes ago
         pausedAt: null,
         totalPausedTime: 30000, // 30 seconds paused
+        intervals: [{ startedAt: now - 120000, endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -244,6 +262,7 @@ describe('Timer Service', () => {
         startedAt: now - 120000, // 2 minutes ago
         pausedAt: now - 20000, // Paused 20 seconds ago
         totalPausedTime: 10000, // 10 seconds previously paused
+        intervals: [{ startedAt: now - 120000, endedAt: now - 20000 }],
         isPaused: true,
         isRunning: true,
       };
@@ -260,6 +279,44 @@ describe('Timer Service', () => {
       expect(formatTime(60)).toBe('00:01:00');
       expect(formatTime(3661)).toBe('01:01:01');
       expect(formatTime(36000)).toBe('10:00:00');
+    });
+  });
+
+  describe('getWorklogSegments', () => {
+    it('returns closed intervals as worklog segments', () => {
+      const timer = {
+        issueKey: 'TEST-123',
+        description: 'Test',
+        startedAt: 1000000,
+        pausedAt: null,
+        totalPausedTime: 0,
+        intervals: [
+          { startedAt: 1000000, endedAt: 1300000 },
+          { startedAt: 1600000, endedAt: 2200000 },
+        ],
+        isPaused: false,
+        isRunning: false,
+      };
+
+      expect(getWorklogSegments(timer)).toEqual([
+        { startedAt: 1000000, endedAt: 1300000, durationSeconds: 300 },
+        { startedAt: 1600000, endedAt: 2200000, durationSeconds: 600 },
+      ]);
+    });
+
+    it('excludes zero-length intervals', () => {
+      const timer = {
+        issueKey: 'TEST-123',
+        description: 'Test',
+        startedAt: 1000000,
+        pausedAt: null,
+        totalPausedTime: 0,
+        intervals: [{ startedAt: 1000000, endedAt: 1000000 }],
+        isPaused: false,
+        isRunning: false,
+      };
+
+      expect(getWorklogSegments(timer)).toEqual([]);
     });
   });
 
@@ -283,6 +340,7 @@ describe('Timer Service', () => {
         startedAt: Date.now(),
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now(), endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -301,6 +359,7 @@ describe('Timer Service', () => {
         startedAt: Date.now(),
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now(), endedAt: null }],
         isPaused: false,
         isRunning: true,
       };
@@ -323,6 +382,7 @@ describe('Timer Service', () => {
         startedAt: Date.now(),
         pausedAt: null,
         totalPausedTime: 0,
+        intervals: [{ startedAt: Date.now(), endedAt: null }],
         isPaused: false,
         isRunning: false,
       };

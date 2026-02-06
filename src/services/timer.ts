@@ -1,13 +1,49 @@
-import type { TimerState } from '../types/index.js';
+import type { TimerState, TimerInterval, WorklogSegment } from '../types/index.js';
 import { getActiveTimer, setActiveTimer, clearActiveTimer } from './config.js';
 
+function ensureIntervals(timer: TimerState): TimerInterval[] {
+  if (Array.isArray(timer.intervals) && timer.intervals.length > 0) {
+    return timer.intervals;
+  }
+
+  if (timer.isPaused) {
+    return [{
+      startedAt: timer.startedAt,
+      endedAt: timer.pausedAt ?? timer.startedAt,
+    }];
+  }
+
+  return [{
+    startedAt: timer.startedAt,
+    endedAt: null,
+  }];
+}
+
+function getOpenInterval(timer: TimerState): TimerInterval | null {
+  const intervals = ensureIntervals(timer);
+  const lastInterval = intervals[intervals.length - 1];
+  if (!lastInterval || lastInterval.endedAt !== null) {
+    return null;
+  }
+  return lastInterval;
+}
+
+function closeOpenInterval(timer: TimerState, endedAt: number): void {
+  const openInterval = getOpenInterval(timer);
+  if (openInterval) {
+    openInterval.endedAt = endedAt;
+  }
+}
+
 export function createTimer(issueKey: string, description: string): TimerState {
+  const now = Date.now();
   const timer: TimerState = {
     issueKey,
     description,
-    startedAt: Date.now(),
+    startedAt: now,
     pausedAt: null,
     totalPausedTime: 0,
+    intervals: [{ startedAt: now, endedAt: null }],
     isPaused: false,
     isRunning: true,
   };
@@ -22,8 +58,11 @@ export function pauseTimer(): TimerState | null {
     return null;
   }
 
+  const now = Date.now();
+  timer.intervals = ensureIntervals(timer);
   timer.isPaused = true;
-  timer.pausedAt = Date.now();
+  timer.pausedAt = now;
+  closeOpenInterval(timer, now);
   setActiveTimer(timer);
   return timer;
 }
@@ -34,9 +73,12 @@ export function resumeTimer(): TimerState | null {
     return null;
   }
 
-  timer.totalPausedTime += Date.now() - timer.pausedAt;
+  const now = Date.now();
+  timer.intervals = ensureIntervals(timer);
+  timer.totalPausedTime += now - timer.pausedAt;
   timer.pausedAt = null;
   timer.isPaused = false;
+  timer.intervals.push({ startedAt: now, endedAt: null });
   setActiveTimer(timer);
   return timer;
 }
@@ -47,9 +89,14 @@ export function stopTimer(): TimerState | null {
     return null;
   }
 
+  const now = Date.now();
+  timer.intervals = ensureIntervals(timer);
+
   // If paused, add the final pause duration
   if (timer.isPaused && timer.pausedAt !== null) {
-    timer.totalPausedTime += Date.now() - timer.pausedAt;
+    timer.totalPausedTime += now - timer.pausedAt;
+  } else {
+    closeOpenInterval(timer, now);
   }
 
   timer.isRunning = false;
@@ -59,6 +106,7 @@ export function stopTimer(): TimerState | null {
 }
 
 export function getElapsedSeconds(timer: TimerState): number {
+  timer.intervals = ensureIntervals(timer);
   const now = Date.now();
   let elapsed = now - timer.startedAt - timer.totalPausedTime;
 
@@ -68,6 +116,22 @@ export function getElapsedSeconds(timer: TimerState): number {
   }
 
   return Math.floor(elapsed / 1000);
+}
+
+export function getWorklogSegments(timer: TimerState): WorklogSegment[] {
+  timer.intervals = ensureIntervals(timer);
+
+  return timer.intervals
+    .filter((interval) => interval.endedAt !== null)
+    .map((interval) => {
+      const endedAt = interval.endedAt as number;
+      return {
+        startedAt: interval.startedAt,
+        endedAt,
+        durationSeconds: Math.floor((endedAt - interval.startedAt) / 1000),
+      };
+    })
+    .filter((segment) => segment.durationSeconds > 0);
 }
 
 export function formatTime(seconds: number): string {
