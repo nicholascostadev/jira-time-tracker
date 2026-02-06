@@ -1,5 +1,11 @@
 # @nicholascostadev/jira-time-tracker
 
+## 0.2.0
+
+### Minor Changes
+
+- ce16345: Add a worklog review step when stopping the timer so users can choose between posting a single entry or split entries by pause/resume segments. Default to single entry for uninterrupted sessions and split entries for sessions with multiple tracked segments.
+
 ## 0.1.1
 
 ### Patch Changes
