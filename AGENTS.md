@@ -46,6 +46,7 @@ src/
 | `jtt start [issue-key]` | Main workflow: select issue -> enter description -> timer -> log -> loop back |
 | `jtt status` | Console output of active timer state (non-interactive) |
 | `jtt resume` | Resume a persisted timer that survived terminal closure |
+| `jtt update` | Update local CLI binary from the latest GitHub Release |
 
 ## How to Run
 
@@ -70,7 +71,9 @@ bun run test                # Run tests
   3. Add a changeset with `bun run changeset` when the change should be released
   4. Open a PR to `main`
   5. After PR merge, let Changesets create/update the release PR
-  6. Merge the release PR to publish a new version
+  6. Merge the release PR to create a version tag and trigger binary builds
+  7. Download release artifacts from GitHub Releases (or use the install script)
+- Releases are distributed through GitHub Releases assets (no npm publish step).
 - Do not merge PRs automatically unless explicitly requested by the user/repository maintainer.
 
 ## Architecture & Key Patterns

@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "changeset publish"
+    "release:tag": "bun run scripts/create-release-tag.ts"
   },
   "keywords": [
     "jira",

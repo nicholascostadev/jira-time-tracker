@@ -5,6 +5,7 @@ import { configCommand } from './commands/config.js';
 import { startCommand } from './commands/start.js';
 import { statusCommand } from './commands/status.js';
 import { resumeCommand } from './commands/resume.js';
+import { updateCommand } from './commands/update.js';
 
 const program = new Command();
 
@@ -35,5 +36,10 @@ program
   .command('resume')
   .description('Resume an existing timer session')
   .action(resumeCommand);
+
+program
+  .command('update')
+  .description('Update jtt to the latest GitHub release binary')
+  .action(updateCommand);
 
 program.parse();
