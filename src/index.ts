@@ -6,13 +6,16 @@ import { startCommand } from './commands/start.js';
 import { statusCommand } from './commands/status.js';
 import { resumeCommand } from './commands/resume.js';
 import { updateCommand } from './commands/update.js';
+import packageJson from '../package.json';
+
+export const VERSION = packageJson.version;
 
 const program = new Command();
 
 program
   .name('jtt')
   .description('CLI tool for tracking time and logging worklogs to Jira')
-  .version('2.0.0');
+  .version(VERSION);
 
 program
   .command('config')

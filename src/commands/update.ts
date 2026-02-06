@@ -1,6 +1,7 @@
 import { basename, join } from 'node:path';
 import { chmod, copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { VERSION } from '../index.js';
 
 interface GitHubReleaseAsset {
   name: string;
@@ -55,6 +56,13 @@ export async function updateCommand(): Promise<void> {
   }
 
   const release = (await releaseResponse.json()) as GitHubRelease;
+  const latestVersion = release.tag_name.replace(/^v/, '');
+
+  if (latestVersion === VERSION) {
+    console.log(`jtt is already up to date (v${VERSION}).`);
+    return;
+  }
+
   const assetName = getPlatformAssetName(release.tag_name);
   const asset = release.assets.find((candidate) => candidate.name === assetName);
 
@@ -68,6 +76,7 @@ export async function updateCommand(): Promise<void> {
   const extractedBinaryPath = join(tempDirectory, 'jtt');
 
   try {
+    console.log(`Updating jtt from v${VERSION} to ${release.tag_name}...`);
     console.log(`Downloading ${asset.name}...`);
     const assetResponse = await fetch(asset.browser_download_url);
 
