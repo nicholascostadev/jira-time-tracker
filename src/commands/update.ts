@@ -1,5 +1,5 @@
-import { basename, join } from 'node:path';
-import { chmod, copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { chmod, copyFile, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { VERSION } from '../version.js';
 
@@ -71,6 +71,8 @@ export async function updateCommand(): Promise<void> {
   }
 
   const targetBinary = getTargetBinaryPath();
+  const targetDirectory = dirname(targetBinary);
+  const stagedBinaryPath = join(targetDirectory, `.jtt-update-${Date.now()}`);
   const tempDirectory = await mkdtemp(join(tmpdir(), 'jtt-update-'));
   const archivePath = join(tempDirectory, asset.name);
   const extractedBinaryPath = join(tempDirectory, 'jtt');
@@ -80,11 +82,12 @@ export async function updateCommand(): Promise<void> {
     console.log(`Downloading ${asset.name}...`);
     const assetResponse = await fetch(asset.browser_download_url);
 
-    if (!assetResponse.ok || !assetResponse.body) {
+    if (!assetResponse.ok) {
       throw new Error(`Failed to download release asset (${assetResponse.status})`);
     }
 
-    await Bun.write(archivePath, assetResponse);
+    const archiveBuffer = await assetResponse.arrayBuffer();
+    await Bun.write(archivePath, archiveBuffer);
 
     const extractionResult = Bun.spawnSync(['tar', '-xzf', archivePath, '-C', tempDirectory], {
       stdout: 'inherit',
@@ -95,12 +98,14 @@ export async function updateCommand(): Promise<void> {
       throw new Error('Failed to extract release archive');
     }
 
-    await chmod(extractedBinaryPath, 0o755);
-    await copyFile(extractedBinaryPath, targetBinary);
+    await copyFile(extractedBinaryPath, stagedBinaryPath);
+    await chmod(stagedBinaryPath, 0o755);
+    await rename(stagedBinaryPath, targetBinary);
 
     console.log(`Updated jtt to ${release.tag_name}`);
     console.log('Your local Jira config and API token were preserved.');
   } finally {
+    await rm(stagedBinaryPath, { force: true });
     await rm(tempDirectory, { recursive: true, force: true });
   }
 }
