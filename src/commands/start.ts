@@ -22,11 +22,11 @@ import {
   formatTime,
 } from '../services/timer.js';
 import { runInteractiveTimer } from '../ui/interactive.js';
-import { Spinner } from '../ui/components.js';
 import type { JiraIssue } from '../types/index.js';
 import { colors, getStatusColors, isDoneStatus } from '../ui/theme.js';
 import { retryFailedWorklogs } from '../services/worklog-queue.js';
 import { getFailedWorklogs } from '../services/config.js';
+import { clearRenderer, showErrorScreen, showLoadingScreen } from '../ui/screens.js';
 
 interface StartOptions {
   description?: string;
@@ -44,18 +44,6 @@ async function createSharedRenderer(): Promise<CliRenderer> {
     useAlternateScreen: true,
     backgroundColor: colors.bg,
   });
-}
-
-/**
- * Clears all children from the renderer root, preparing for a new page.
- */
-function clearRenderer(renderer: CliRenderer): void {
-  while (renderer.root.getChildrenCount() > 0) {
-    const children = renderer.root.getChildren();
-    if (children.length > 0) {
-      renderer.root.remove(children[0].id);
-    }
-  }
 }
 
 export async function startCommand(
@@ -109,8 +97,9 @@ export async function startCommand(
   if (issueKey) {
     const issueKeyUpper = issueKey.toUpperCase();
     if (!/^[A-Z]+-\d+$/.test(issueKeyUpper)) {
-      showErrorScreen(renderer, `Invalid issue key: ${issueKey}. Expected format: PROJECT-123`);
-      return;
+      await showErrorScreen(renderer, `Invalid issue key: ${issueKey}. Expected format: PROJECT-123`);
+      renderer.destroy();
+      process.exit(1);
     }
 
     // Show loading while fetching issue
@@ -458,6 +447,7 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
         ? [
             { text: '[enter] select' },
             { text: '[←→/tab] filter status' },
+            { text: '[x] clear filters' },
             { text: '[↑↓] navigate' },
             { text: '[esc] cancel' },
           ]
@@ -623,6 +613,15 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
           return;
         }
 
+        if (key.name === 'x') {
+          if (searchQuery || statusFilterIndex >= 0) {
+            searchQuery = '';
+            statusFilterIndex = -1;
+            render();
+          }
+          return;
+        }
+
         // Printable character — append to search
         if (
           key.sequence &&
@@ -775,194 +774,5 @@ async function getDescriptionInteractive(renderer: CliRenderer): Promise<string>
     });
 
     render();
-  });
-}
-
-/**
- * Shows a loading screen with a spinner. If the task fails, shows an error
- * screen with [r] retry / [q] quit options — never exits the TUI.
- */
-async function showLoadingScreen<T>(
-  renderer: CliRenderer,
-  message: string,
-  task: () => Promise<T>
-): Promise<T> {
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let spinnerIndex = 0;
-    let spinnerInterval: Timer | null = null;
-
-    // Remove old keypress listeners from previous pages
-    renderer.keyInput.removeAllListeners('keypress');
-
-    const buildLoadingUI = () => {
-      return Box(
-        {
-          width: '100%',
-          height: '100%',
-          flexDirection: 'column',
-          padding: 1,
-          backgroundColor: colors.bg,
-        },
-        Box(
-          {
-            width: '100%',
-            height: 3,
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderStyle: 'rounded',
-            borderColor: colors.border,
-            border: true,
-            marginBottom: 1,
-          },
-          Text({
-            content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
-          })
-        ),
-        Box(
-          {
-            width: '100%',
-            flexGrow: 1,
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderStyle: 'rounded',
-            borderColor: colors.border,
-            border: true,
-          },
-          Spinner(spinnerIndex),
-          Box(
-            { marginTop: 1 },
-            Text({
-              content: message,
-              fg: colors.textMuted,
-            })
-          )
-        )
-      );
-    };
-
-    const renderLoading = () => {
-      clearRenderer(renderer);
-      renderer.root.add(buildLoadingUI());
-    };
-
-    renderLoading();
-
-    spinnerInterval = setInterval(() => {
-      spinnerIndex++;
-      renderLoading();
-    }, 300);
-
-    try {
-      const result = await task();
-      clearInterval(spinnerInterval);
-      return result;
-    } catch (error) {
-      if (spinnerInterval) {
-        clearInterval(spinnerInterval);
-      }
-
-      // Show error screen — stay in the TUI
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const userAction = await showErrorScreen(renderer, errorMessage);
-
-      if (userAction === 'retry') {
-        // Loop will retry the task
-        continue;
-      } else {
-        // Quit
-        renderer.destroy();
-        console.log('\nCancelled.\n');
-        process.exit(1);
-      }
-    }
-  }
-}
-
-/**
- * Shows an error screen with [r] retry / [q] quit options.
- * Returns 'retry' or 'quit' based on user input.
- */
-function showErrorScreen(renderer: CliRenderer, errorMessage: string): Promise<'retry' | 'quit'> {
-  return new Promise((resolve) => {
-    renderer.keyInput.removeAllListeners('keypress');
-
-    const buildUI = () => {
-      return Box(
-        {
-          width: '100%',
-          height: '100%',
-          flexDirection: 'column',
-          padding: 1,
-          backgroundColor: colors.bg,
-        },
-        Box(
-          {
-            width: '100%',
-            height: 3,
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderStyle: 'rounded',
-            borderColor: colors.border,
-            border: true,
-            marginBottom: 1,
-          },
-          Text({
-            content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
-          })
-        ),
-        Box(
-          {
-            width: '100%',
-            flexGrow: 1,
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 2,
-            borderStyle: 'rounded',
-            borderColor: colors.error,
-            border: true,
-          },
-          Text({
-            content: 'SOMETHING WENT WRONG',
-            fg: colors.error,
-          }),
-          Text({
-            content: errorMessage,
-            fg: colors.textMuted,
-          }),
-          Box(
-            {
-              flexDirection: 'row',
-              gap: 3,
-              marginTop: 1,
-            },
-            Text({
-              content: '[r] retry',
-              fg: colors.text,
-            }),
-            Text({
-              content: '[q] quit',
-              fg: colors.textDim,
-            })
-          )
-        )
-      );
-    };
-
-    clearRenderer(renderer);
-    renderer.root.add(buildUI());
-
-    renderer.keyInput.on('keypress', (key: KeyEvent) => {
-      const keyName = key.name?.toLowerCase();
-      if (keyName === 'r') {
-        resolve('retry');
-      } else if (keyName === 'q' || keyName === 'escape') {
-        resolve('quit');
-      }
-    });
   });
 }

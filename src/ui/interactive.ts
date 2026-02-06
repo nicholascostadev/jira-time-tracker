@@ -36,6 +36,14 @@ export type TimerResult =
   | { action: 'quit' }
   | { action: 'error'; message: string };
 
+const QUIT_CONFIRM_THRESHOLD_SECONDS = 5 * 60;
+const ASCII_FONT = 'block' as const;
+const MAX_DIGIT_WIDTH = Math.max(
+  ...('0123456789'.split('').map((d) => measureText({ text: d, font: ASCII_FONT }).width))
+);
+const COLON_WIDTH = measureText({ text: ':', font: ASCII_FONT }).width;
+const FONT_HEIGHT = measureText({ text: '0', font: ASCII_FONT }).height;
+
 
 function clearRenderer(renderer: CliRenderer): void {
   while (renderer.root.getChildrenCount() > 0) {
@@ -71,9 +79,29 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
   }
 
   return new Promise<TimerResult>((resolve) => {
+    let showQuitConfirm = false;
+
+    const onSigint = () => {
+      const currentTimer = getActiveTimer();
+      if (!currentTimer) {
+        void cleanup(false);
+        return;
+      }
+
+      const elapsed = getElapsedSeconds(currentTimer);
+      if (elapsed >= QUIT_CONFIRM_THRESHOLD_SECONDS) {
+        showQuitConfirm = true;
+        render();
+        return;
+      }
+
+      void cleanup(false);
+    };
+
     const cleanup = async (logTime: boolean) => {
       if (isExiting) return;
       isExiting = true;
+      process.removeListener('SIGINT', onSigint);
 
       if (updateInterval) {
         clearInterval(updateInterval);
@@ -407,14 +435,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             ),
             // ASCII time - each digit in a fixed-width cell to prevent shifting
             ...(() => {
-              const font = 'block' as const;
               const timerColor = currentTimer.isPaused ? colors.textMuted : colors.text;
-              // Find the widest digit to use as fixed cell width
-              const maxDigitWidth = Math.max(
-                ...('0123456789'.split('').map(d => measureText({ text: d, font }).width))
-              );
-              const colonWidth = measureText({ text: ':', font }).width;
-              const fontHeight = measureText({ text: '0', font }).height;
 
               return [Box(
                 {
@@ -422,17 +443,17 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
                   alignItems: 'center',
                   justifyContent: 'center',
                 },
-                ...timeDisplay.split('').map((char, i) =>
+                ...timeDisplay.split('').map((char) =>
                   Box(
                     {
-                      width: char === ':' ? colonWidth : maxDigitWidth,
-                      height: fontHeight,
+                      width: char === ':' ? COLON_WIDTH : MAX_DIGIT_WIDTH,
+                      height: FONT_HEIGHT,
                       alignItems: 'center',
                       justifyContent: 'center',
                     },
                     ASCIIFont({
                       text: char,
-                      font,
+                      font: ASCII_FONT,
                       color: timerColor,
                     })
                   )
@@ -440,6 +461,31 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               )];
             })()
           ),
+          ...(showQuitConfirm
+            ? [
+                Box(
+                  {
+                    borderStyle: 'rounded',
+                    borderColor: colors.warning,
+                    border: true,
+                    padding: 1,
+                    marginTop: 1,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'column',
+                    gap: 1,
+                  },
+                  Text({
+                    content: 'Discard tracked time without logging?',
+                    fg: colors.warning,
+                  }),
+                  Text({
+                    content: '[y] discard  [n] continue tracking',
+                    fg: colors.textDim,
+                  })
+                ),
+              ]
+            : []),
           // Key hints - minimal style
           Box(
             {
@@ -490,7 +536,23 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       const keyName = key.name?.toLowerCase();
 
       switch (keyName) {
+        case 'y':
+          if (showQuitConfirm) {
+            void cleanup(false);
+          }
+          break;
+
+        case 'n':
+          if (showQuitConfirm) {
+            showQuitConfirm = false;
+            render();
+          }
+          break;
+
         case 'p':
+          if (showQuitConfirm) {
+            break;
+          }
           if (!currentTimer.isPaused) {
             pauseTimer();
             render();
@@ -498,6 +560,9 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
           break;
 
         case 'r':
+          if (showQuitConfirm) {
+            break;
+          }
           if (currentTimer.isPaused) {
             resumeTimer();
             render();
@@ -505,20 +570,32 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
           break;
 
         case 's':
+          if (showQuitConfirm) {
+            break;
+          }
           cleanup(true);
           break;
 
         case 'q':
         case 'escape':
-          cleanup(false);
+          if (showQuitConfirm) {
+            showQuitConfirm = false;
+            render();
+            break;
+          }
+
+          if (getElapsedSeconds(currentTimer) >= QUIT_CONFIRM_THRESHOLD_SECONDS) {
+            showQuitConfirm = true;
+            render();
+          } else {
+            void cleanup(false);
+          }
           break;
       }
     });
 
     // Handle Ctrl+C
-    process.on('SIGINT', () => {
-      cleanup(false);
-    });
+    process.on('SIGINT', onSigint);
 
     // Hide cursor - no text input on this screen
     renderer.setCursorPosition(0, 0, false);

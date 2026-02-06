@@ -7,6 +7,8 @@ export interface RetryResult {
   failed: number;
 }
 
+const WORKLOG_RETRY_ATTEMPTS = 2;
+
 /**
  * Retries all failed worklogs in the queue.
  * Successfully posted worklogs are removed from the queue.
@@ -24,16 +26,28 @@ export async function retryFailedWorklogs(): Promise<RetryResult> {
   // Process in reverse order so removal indices stay valid
   for (let i = queue.length - 1; i >= 0; i--) {
     const worklog = queue[i];
-    try {
-      await addWorklog(
-        worklog.issueKey,
-        worklog.timeSpentSeconds,
-        worklog.comment,
-        new Date(worklog.started)
-      );
-      removeFailedWorklog(i);
-      succeeded++;
-    } catch {
+    let posted = false;
+
+    for (let attempt = 0; attempt <= WORKLOG_RETRY_ATTEMPTS; attempt++) {
+      try {
+        await addWorklog(
+          worklog.issueKey,
+          worklog.timeSpentSeconds,
+          worklog.comment,
+          new Date(worklog.started)
+        );
+        removeFailedWorklog(i);
+        succeeded++;
+        posted = true;
+        break;
+      } catch {
+        if (attempt < WORKLOG_RETRY_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+        }
+      }
+    }
+
+    if (!posted) {
       failed++;
     }
   }

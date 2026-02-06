@@ -12,7 +12,6 @@ A terminal-based Jira time tracker built with Bun + TypeScript. It provides a fu
 - **CLI Framework**: Commander.js
 - **Jira Client**: `jira.js` (Version2Client) + raw `fetch` for search endpoint
 - **Config Storage**: `conf` (persistent JSON config on disk)
-- **OAuth Browser Flow**: `open` package + local HTTP server on port 8742
 - **Testing**: Vitest
 
 ## Project Structure
@@ -28,10 +27,9 @@ src/
     status.ts               # `jtt status` — console output of active timer state
     resume.ts               # `jtt resume` — resume a persisted timer
   services/
-    auth.ts                 # ensureAuthenticated() — token refresh orchestration
+    auth.ts                 # ensureAuthenticated() — validates config + initializes Jira client
     config.ts               # Persistent config via `conf` library (credentials + timer state)
     jira.ts                 # Jira API client (issue fetch, worklog posting, search, connection test)
-    oauth.ts                # OAuth 2.0 flow (browser auth, token refresh)
     timer.ts                # Timer state machine (create, pause, resume, stop, elapsed calculation)
     *.test.ts               # Unit tests for each service
   ui/
@@ -44,7 +42,7 @@ src/
 
 | Command | Description |
 |---|---|
-| `jtt config` | Interactive setup wizard (API token or OAuth). `--show` prints config, `--clear` deletes it. |
+| `jtt config` | Interactive API token setup wizard. `--show` prints config, `--clear` deletes it. |
 | `jtt start [issue-key]` | Main workflow: select issue -> enter description -> timer -> log -> loop back |
 | `jtt status` | Console output of active timer state (non-interactive) |
 | `jtt resume` | Resume a persisted timer that survived terminal closure |
@@ -102,7 +100,7 @@ After rendering, a `setTimeout(fn, 50)` finds target components by string ID via
 
 `startCommand` wraps the full flow in a `while(true)` loop. After the timer logs a worklog, it shows a success screen, re-fetches issues, and returns to issue selection — rather than exiting.
 
-`runInteractiveTimer` returns `{ action: 'logged' | 'quit' }` — the loop continues on `'logged'` and exits on `'quit'`.
+`runInteractiveTimer` returns `{ action: 'logged' | 'quit' | 'error' }` — the loop continues on `'logged'`/`'error'` and exits on `'quit'`.
 
 ### Timer Persistence
 
@@ -123,10 +121,9 @@ A repeated cleanup pattern before `process.exit`: briefly set stdin to raw mode,
 
 ### Authentication
 
-Two methods, discriminated by `auth.method`:
+Single method:
 
 - **API Token**: Basic auth (`email:apiToken`). Host = direct Jira URL.
-- **OAuth 2.0**: Bearer token. Host = `https://api.atlassian.com/ex/jira/${cloudId}`. Tokens auto-refresh via `ensureAuthenticated()` when within 5 minutes of expiry.
 
 ### API Calls
 
@@ -187,7 +184,7 @@ The issue selection screen includes:
 
 Tests are colocated with services (`src/services/*.test.ts`). Run with `bun run test`.
 
-- Config, timer, jira, and oauth services are all tested
+- Config, timer, jira, auth, and queue services are all tested
 - Tests use `vi.mock()` with factory functions
 - Timer tests use `vi.useFakeTimers()` for deterministic time
 - Config tests mock the `conf` library with an in-memory store
