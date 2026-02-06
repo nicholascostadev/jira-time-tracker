@@ -8,6 +8,7 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -34,3 +35,16 @@ jobs:
           createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger binary build workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(git tag --points-at HEAD | grep '^v' | head -n 1 || true)
+          if [ -z "$tag" ]; then
+            echo "No release tag on HEAD; skipping binary build trigger."
+            exit 0
+          fi
+
+          echo "Dispatching Build Release Binaries for $tag"
+          gh workflow run build-release.yml --ref main -f tag="$tag"
