@@ -318,6 +318,36 @@ describe('Timer Service', () => {
 
       expect(getWorklogSegments(timer)).toEqual([]);
     });
+
+    it('creates a segment from legacy paused timer without intervals', () => {
+      const timer = {
+        issueKey: 'TEST-123',
+        description: 'Test',
+        startedAt: 1000000,
+        pausedAt: 1300000,
+        totalPausedTime: 0,
+        isPaused: true,
+        isRunning: true,
+      };
+
+      expect(getWorklogSegments(timer as any)).toEqual([
+        { startedAt: 1000000, endedAt: 1300000, durationSeconds: 300 },
+      ]);
+    });
+
+    it('returns no segments for legacy running timer without intervals', () => {
+      const timer = {
+        issueKey: 'TEST-123',
+        description: 'Test',
+        startedAt: 1000000,
+        pausedAt: null,
+        totalPausedTime: 0,
+        isPaused: false,
+        isRunning: true,
+      };
+
+      expect(getWorklogSegments(timer as any)).toEqual([]);
+    });
   });
 
   describe('formatTimeHumanReadable', () => {

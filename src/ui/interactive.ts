@@ -27,6 +27,7 @@ import { addWorklog } from '../services/jira.js';
 import { getActiveTimer, addFailedWorklog, getDefaultWorklogMessage, setDefaultWorklogMessage } from '../services/config.js';
 import { colors } from './theme.js';
 import { Spinner } from './components.js';
+import { buildWorklogsToPost, countRoundedEntries, getDefaultWorklogMode, type WorklogMode } from './worklog-review.js';
 
 interface InteractiveTimerOptions {
   issue: JiraIssue;
@@ -39,8 +40,6 @@ export type TimerResult =
   | { action: 'logged' }
   | { action: 'quit' }
   | { action: 'error'; message: string };
-
-type WorklogMode = 'single' | 'split';
 
 const QUIT_CONFIRM_THRESHOLD_SECONDS = 5 * 60;
 const ASCII_FONT = 'block' as const;
@@ -163,18 +162,10 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       const elapsed = getElapsedSeconds(stoppedTimer);
       const segments = getWorklogSegments(stoppedTimer);
 
-      const worklogsToPost = mode === 'split' && segments.length > 1
-        ? segments.map((segment) => ({
-            startedAt: segment.startedAt,
-            durationSeconds: segment.durationSeconds,
-          }))
-        : [{
-            startedAt: segments[0]?.startedAt ?? stoppedTimer.startedAt,
-            durationSeconds: elapsed,
-          }];
+      const worklogsToPost = buildWorklogsToPost(mode, segments, elapsed, stoppedTimer.startedAt);
 
       const loggedTimeStr = formatTimeHumanReadable(elapsed < 60 ? 60 : elapsed);
-      const roundedSegmentsCount = worklogsToPost.filter((entry) => entry.durationSeconds < 60).length;
+      const roundedSegmentsCount = countRoundedEntries(worklogsToPost);
       const isSingleEntry = worklogsToPost.length === 1;
 
       // Show logging screen in the same renderer
@@ -595,8 +586,9 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         return;
       }
 
-      const hasSplitOptions = getWorklogSegments(currentTimer).length > 1;
-      let selectedMode: WorklogMode = hasSplitOptions ? 'split' : 'single';
+      const segments = getWorklogSegments(currentTimer);
+      const hasSplitOptions = segments.length > 1;
+      let selectedMode: WorklogMode = getDefaultWorklogMode(segments);
 
       const renderReview = () => {
         clearRenderer(renderer);
