@@ -1,10 +1,16 @@
 import Conf from 'conf';
+import { z } from 'zod/v4';
+import {
+  AuthMethodSchema,
+  FailedWorklogSchema,
+} from '../types/index.js';
 import type {
   JiraConfig,
   JiraAuth,
   TimerState,
   OAuthClientConfig,
   AuthMethod,
+  FailedWorklog,
 } from '../types/index.js';
 
 interface ConfigSchema {
@@ -23,6 +29,8 @@ interface ConfigSchema {
   oauthClientSecret: string;
   // Timer state
   activeTimer: TimerState | null;
+  // Failed worklog queue
+  failedWorklogs: FailedWorklog[];
 }
 
 const config = new Conf<ConfigSchema>({
@@ -72,12 +80,18 @@ const config = new Conf<ConfigSchema>({
       type: ['object', 'null'],
       default: null,
     },
+    failedWorklogs: {
+      type: 'array',
+      default: [],
+    },
   },
 });
 
 export function getJiraConfig(): JiraConfig | null {
   const jiraHost = config.get('jiraHost');
-  const authMethod = config.get('authMethod') as AuthMethod | '';
+  const rawAuthMethod = config.get('authMethod');
+  const parsed = AuthMethodSchema.safeParse(rawAuthMethod);
+  const authMethod = parsed.success ? parsed.data : null;
 
   if (!jiraHost || !authMethod) {
     return null;
@@ -213,6 +227,28 @@ export function clearActiveTimer(): void {
 
 export function getConfigPath(): string {
   return config.path;
+}
+
+export function getFailedWorklogs(): FailedWorklog[] {
+  const raw = config.get('failedWorklogs');
+  const parsed = z.array(FailedWorklogSchema).safeParse(raw);
+  return parsed.success ? parsed.data : [];
+}
+
+export function addFailedWorklog(worklog: FailedWorklog): void {
+  const queue = getFailedWorklogs();
+  queue.push(worklog);
+  config.set('failedWorklogs', queue);
+}
+
+export function removeFailedWorklog(index: number): void {
+  const queue = getFailedWorklogs();
+  queue.splice(index, 1);
+  config.set('failedWorklogs', queue);
+}
+
+export function clearFailedWorklogs(): void {
+  config.set('failedWorklogs', []);
 }
 
 export function maskApiToken(token: string): string {
