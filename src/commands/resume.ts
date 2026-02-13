@@ -17,7 +17,7 @@ import { destroyUI } from '../ui/react.js';
  */
 async function createSharedRenderer(): Promise<CliRenderer> {
   return await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useAlternateScreen: true,
     backgroundColor: colors.bg,
   });
