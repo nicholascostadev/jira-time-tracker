@@ -13,7 +13,7 @@ import {
   type InputRenderable,
 } from '@opentui/core';
 import { ensureAuthenticated } from '../services/auth.js';
-import { getIssue, getMyAssignedIssues, getCurrentUser } from '../services/jira.js';
+import { getIssue, getMyAssignedIssues, getCurrentUser, isJiraAuthenticationError } from '../services/jira.js';
 import {
   createTimer,
   hasActiveTimer,
@@ -26,7 +26,7 @@ import type { JiraIssue } from '../types/index.js';
 import { colors, getStatusColors, isDoneStatus } from '../ui/theme.js';
 import { retryFailedWorklogs } from '../services/worklog-queue.js';
 import { getFailedWorklogs } from '../services/config.js';
-import { clearRenderer, showErrorScreen, showLoadingScreen } from '../ui/screens.js';
+import { clearRenderer, showErrorScreen, showLoadingScreen, showReauthenticationScreen } from '../ui/screens.js';
 
 interface StartOptions {
   description?: string;
@@ -527,6 +527,21 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
         const issue = await getIssue(keyUpper);
         cleanup(issue);
       } catch (error) {
+        if (isJiraAuthenticationError(error)) {
+          const reauthenticated = await showReauthenticationScreen(renderer);
+          if (reauthenticated) {
+            statusMessage = 'Authentication updated. Press [enter] to retry.';
+            isError = false;
+            render();
+            return;
+          }
+
+          statusMessage = 'Authentication update cancelled.';
+          isError = true;
+          render();
+          return;
+        }
+
         statusMessage = `Failed to fetch issue: ${error instanceof Error ? error.message : 'Unknown error'}`;
         isError = true;
         render();
@@ -636,5 +651,4 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
     render();
   });
 }
-
 

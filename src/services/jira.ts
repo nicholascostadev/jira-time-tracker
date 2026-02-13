@@ -31,6 +31,29 @@ let currentConfig: JiraConfig | null = null;
 
 const DEFAULT_TIMEOUT_MS = 10000;
 const SEARCH_RETRY_ATTEMPTS = 2;
+const AUTH_ERROR_MESSAGE = 'Authentication failed. Your Jira token may be invalid or expired.';
+
+export class JiraAuthenticationError extends Error {
+  readonly status = 401;
+
+  constructor(message = AUTH_ERROR_MESSAGE) {
+    super(message);
+    this.name = 'JiraAuthenticationError';
+  }
+}
+
+export function isJiraAuthenticationError(error: unknown): error is JiraAuthenticationError {
+  if (error instanceof JiraAuthenticationError) {
+    return true;
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return message.includes('authentication failed') || message.includes('unauthorized');
+  }
+
+  return false;
+}
 
 async function fetchWithTimeout(
   input: string,
@@ -132,7 +155,7 @@ export async function getIssue(issueKey: string): Promise<JiraIssue> {
         throw new Error(`Issue ${issueKey} not found`);
       }
       if (httpStatus === 401) {
-        throw new Error('Authentication failed. Check your credentials with "jtt config"');
+        throw new JiraAuthenticationError();
       }
     }
     throw error;
@@ -170,7 +193,7 @@ export async function addWorklog(
     if (parsed.success && parsed.data.response?.status) {
       const httpStatus = parsed.data.response.status;
       if (httpStatus === 401) {
-        throw new Error('Authentication failed. Check your credentials with "jtt config"');
+        throw new JiraAuthenticationError();
       }
       if (httpStatus === 403) {
         throw new Error(
@@ -211,7 +234,7 @@ export async function getMyAssignedIssues(): Promise<JiraIssue[]> {
 
       if (!response.ok) {
         if (response.status === 401) {
-          throw new Error('Authentication failed. Check your credentials with "jtt config"');
+          throw new JiraAuthenticationError();
         }
 
         if (isRetryableStatus(response.status) && attempt < SEARCH_RETRY_ATTEMPTS) {
@@ -252,9 +275,17 @@ export async function getMyAssignedIssues(): Promise<JiraIssue[]> {
 export async function getCurrentUser(): Promise<{ displayName: string; email: string }> {
   const jira = getJiraClient();
 
-  const user = await jira.myself.getCurrentUser();
-  return {
-    displayName: user.displayName ?? 'Unknown',
-    email: user.emailAddress ?? '',
-  };
+  try {
+    const user = await jira.myself.getCurrentUser();
+    return {
+      displayName: user.displayName ?? 'Unknown',
+      email: user.emailAddress ?? '',
+    };
+  } catch (error: unknown) {
+    const parsed = JiraErrorResponseSchema.safeParse(error);
+    if (parsed.success && parsed.data.response?.status === 401) {
+      throw new JiraAuthenticationError();
+    }
+    throw error;
+  }
 }

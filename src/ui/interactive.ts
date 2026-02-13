@@ -23,10 +23,11 @@ import {
   formatTime,
   formatTimeHumanReadable,
 } from '../services/timer.js';
-import { addWorklog } from '../services/jira.js';
+import { addWorklog, isJiraAuthenticationError } from '../services/jira.js';
 import { getActiveTimer, addFailedWorklog, getDefaultWorklogMessage, setDefaultWorklogMessage } from '../services/config.js';
 import { colors } from './theme.js';
 import { Spinner } from './components.js';
+import { showReauthenticationScreen } from './screens.js';
 import {
   buildWorklogsToPost,
   canSplitWorklogEntries,
@@ -247,41 +248,76 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       };
 
       renderLogging();
-      const loggingInterval = setInterval(() => {
+      let loggingInterval: Timer | null = setInterval(() => {
         spinnerIndex++;
         renderLogging();
       }, 300);
 
       let failedCount = 0;
       let firstErrorMessage = '';
+      let promptedReauthentication = false;
 
       for (const entry of worklogsToPost) {
-        try {
-          await addWorklog(
-            stoppedTimer.issueKey,
-            entry.durationSeconds,
-            description,
-            new Date(entry.startedAt)
-          );
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          if (!firstErrorMessage) {
-            firstErrorMessage = errorMessage;
+        let posted = false;
+        let entryErrorMessage = 'Unknown error';
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            await addWorklog(
+              stoppedTimer.issueKey,
+              entry.durationSeconds,
+              description,
+              new Date(entry.startedAt)
+            );
+            posted = true;
+            break;
+          } catch (error) {
+            entryErrorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+            if (!promptedReauthentication && attempt === 0 && isJiraAuthenticationError(error)) {
+              promptedReauthentication = true;
+              if (loggingInterval) {
+                clearInterval(loggingInterval);
+                loggingInterval = null;
+              }
+
+              const reauthenticated = await showReauthenticationScreen(renderer);
+              if (reauthenticated) {
+                spinnerIndex = 0;
+                renderLogging();
+                loggingInterval = setInterval(() => {
+                  spinnerIndex++;
+                  renderLogging();
+                }, 300);
+                continue;
+              }
+            }
+
+            break;
           }
+        }
+
+        if (!posted) {
           failedCount++;
+          if (!firstErrorMessage) {
+            firstErrorMessage = entryErrorMessage;
+          }
           addFailedWorklog({
             issueKey: stoppedTimer.issueKey,
             timeSpentSeconds: entry.durationSeconds,
             comment: description,
             started: new Date(entry.startedAt).toISOString(),
             failedAt: Date.now(),
-            error: errorMessage,
+            error: entryErrorMessage,
           });
         }
       }
 
-      if (failedCount > 0) {
+      if (loggingInterval) {
         clearInterval(loggingInterval);
+      }
+
+      if (failedCount > 0) {
         clearRenderer(renderer);
         renderer.root.add(
           Box(
@@ -313,8 +349,6 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         resolve({ action: 'error', message: firstErrorMessage || 'Some worklogs failed to post' });
         return;
       }
-
-      clearInterval(loggingInterval);
 
       // Show success briefly
       clearRenderer(renderer);
