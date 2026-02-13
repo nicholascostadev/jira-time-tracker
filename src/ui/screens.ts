@@ -1,10 +1,4 @@
 import {
-  Box,
-  Text,
-  Input,
-  t,
-  bold,
-  fg,
   type CliRenderer,
   type KeyEvent,
   type InputRenderable,
@@ -14,6 +8,7 @@ import { colors } from './theme.js';
 import { Spinner } from './components.js';
 import { getJiraConfig, setJiraConfig } from '../services/config.js';
 import { initializeJiraClient, isJiraAuthenticationError, testConnection } from '../services/jira.js';
+import { Box, Input, Text, clearUI, destroyUI, renderUI } from './react.js';
 
 type ErrorScreenAction = 'retry' | 'quit' | 'reauthenticate';
 const API_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
@@ -44,12 +39,7 @@ function copyToClipboard(text: string): Promise<void> {
 }
 
 export function clearRenderer(renderer: CliRenderer): void {
-  while (renderer.root.getChildrenCount() > 0) {
-    const children = renderer.root.getChildren();
-    if (children.length > 0) {
-      renderer.root.remove(children[0].id);
-    }
-  }
+  clearUI(renderer);
 }
 
 export function showErrorScreen(
@@ -80,7 +70,7 @@ export function showErrorScreen(
           border: true,
           marginBottom: 1,
         },
-        Text({ content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}` })
+        Text({ content: 'JIRA TIME TRACKER', fg: colors.text })
       ),
       Box(
         {
@@ -111,8 +101,7 @@ export function showErrorScreen(
       )
     );
 
-    clearRenderer(renderer);
-    renderer.root.add(ui);
+    renderUI(renderer, ui);
 
     renderer.keyInput.on('keypress', (key: KeyEvent) => {
       const keyName = key.name?.toLowerCase();
@@ -168,7 +157,7 @@ export function showReauthenticationScreen(renderer: CliRenderer): Promise<boole
             border: true,
             marginBottom: 1,
           },
-          Text({ content: t`${bold(fg(colors.text)('RE-AUTHENTICATE'))}` })
+          Text({ content: 'RE-AUTHENTICATE', fg: colors.text })
         ),
       ];
 
@@ -262,8 +251,8 @@ export function showReauthenticationScreen(renderer: CliRenderer): Promise<boole
         );
       }
 
-      clearRenderer(renderer);
-      renderer.root.add(
+      renderUI(
+        renderer,
         Box(
           {
             width: '100%',
@@ -405,8 +394,8 @@ export async function showLoadingScreen<T>(
     renderer.keyInput.removeAllListeners('keypress');
 
     const renderLoading = () => {
-      clearRenderer(renderer);
-      renderer.root.add(
+      renderUI(
+        renderer,
         Box(
           {
             width: '100%',
@@ -427,7 +416,7 @@ export async function showLoadingScreen<T>(
               border: true,
               marginBottom: 1,
             },
-            Text({ content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}` })
+            Text({ content: 'JIRA TIME TRACKER', fg: colors.text })
           ),
           Box(
             {
@@ -479,7 +468,7 @@ export async function showLoadingScreen<T>(
         continue;
       }
 
-      renderer.destroy();
+      destroyUI(renderer);
       console.log('\nCancelled.\n');
       process.exit(1);
     }

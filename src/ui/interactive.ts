@@ -1,18 +1,11 @@
 import {
   createCliRenderer,
-  Box,
-  Text,
-  Input,
-  ASCIIFont,
   measureText,
-  t,
-  bold,
-  fg,
-  dim,
   type CliRenderer,
   type KeyEvent,
   type InputRenderable,
 } from '@opentui/core';
+import { ASCIIFont, Box, Input, Text, clearUI, destroyUI, renderUI } from './react.js';
 import type { TimerState, JiraIssue } from '../types/index.js';
 import {
   pauseTimer,
@@ -58,12 +51,7 @@ const FONT_HEIGHT = measureText({ text: '0', font: ASCII_FONT }).height;
 
 
 function clearRenderer(renderer: CliRenderer): void {
-  while (renderer.root.getChildrenCount() > 0) {
-    const children = renderer.root.getChildren();
-    if (children.length > 0) {
-      renderer.root.remove(children[0].id);
-    }
-  }
+  clearUI(renderer);
 }
 
 export async function runInteractiveTimer(options: InteractiveTimerOptions): Promise<TimerResult> {
@@ -134,7 +122,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       stopTimer();
 
       if (ownsRenderer) {
-        renderer.destroy();
+        destroyUI(renderer);
       }
       resolve({ action: 'quit' });
     };
@@ -161,7 +149,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
       if (!stoppedTimer) {
         if (ownsRenderer) {
-          renderer.destroy();
+          destroyUI(renderer);
         }
         resolve({ action: 'quit' });
         return;
@@ -181,7 +169,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
       let spinnerIndex = 0;
       const renderLogging = () => {
         clearRenderer(renderer);
-        renderer.root.add(
+        renderUI(
+          renderer,
           Box(
             {
               width: '100%',
@@ -203,7 +192,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
                 marginBottom: 1,
               },
               Text({
-                content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+                content: 'JIRA TIME TRACKER',
+                fg: colors.text,
               })
             ),
             Box(
@@ -319,7 +309,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
       if (failedCount > 0) {
         clearRenderer(renderer);
-        renderer.root.add(
+        renderUI(
+          renderer,
           Box(
             {
               width: '100%',
@@ -344,7 +335,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         );
         await new Promise((r) => setTimeout(r, 2500));
         if (ownsRenderer) {
-          renderer.destroy();
+          destroyUI(renderer);
         }
         resolve({ action: 'error', message: firstErrorMessage || 'Some worklogs failed to post' });
         return;
@@ -352,7 +343,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
       // Show success briefly
       clearRenderer(renderer);
-      renderer.root.add(
+      renderUI(
+        renderer,
         Box(
           {
             width: '100%',
@@ -374,7 +366,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
               marginBottom: 1,
             },
             Text({
-              content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+              content: 'JIRA TIME TRACKER',
+              fg: colors.text,
             })
           ),
           Box(
@@ -451,7 +444,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('WORK DESCRIPTION'))}`,
+            content: 'WORK DESCRIPTION',
+            fg: colors.text,
           })
         ),
         // Input section
@@ -510,7 +504,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
     const renderDescription = () => {
       clearRenderer(renderer);
-      renderer.root.add(buildDescriptionUI());
+      renderUI(renderer, buildDescriptionUI());
 
       setTimeout(() => {
         const input = renderer.root.findDescendantById('worklog-description-input');
@@ -649,7 +643,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('REVIEW WORKLOG'))}`,
+            content: 'REVIEW WORKLOG',
+            fg: colors.text,
           })
         ),
         Box(
@@ -664,7 +659,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
           Box(
             { flexDirection: 'row', gap: 1 },
             Text({ content: 'ISSUE'.padEnd(14), fg: colors.textDim }),
-            Text({ content: t`${bold(issue.key)}`, fg: colors.text })
+            Text({ content: issue.key, fg: colors.text })
           ),
           Box(
             { flexDirection: 'row', gap: 1 },
@@ -734,7 +729,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
         clearRenderer(renderer);
         const reviewUI = buildReviewUI(description, selectedMode);
         if (reviewUI) {
-          renderer.root.add(reviewUI);
+          renderUI(renderer, reviewUI);
         }
       };
 
@@ -888,7 +883,8 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+            content: 'JIRA TIME TRACKER',
+            fg: colors.text,
           })
         ),
         // Main content panel
@@ -918,7 +914,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
                 fg: colors.textLabel,
               }),
               Text({
-                content: t`${bold(issue.key)}`,
+                content: issue.key,
                 fg: colors.text,
               }),
               Text({
@@ -1048,7 +1044,7 @@ export async function runInteractiveTimer(options: InteractiveTimerOptions): Pro
 
       const ui = buildTimerUI();
       if (ui) {
-        renderer.root.add(ui);
+        renderUI(renderer, ui);
       }
     };
 

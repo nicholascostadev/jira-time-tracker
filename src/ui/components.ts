@@ -1,14 +1,6 @@
 // Reusable OpenTUI components for Jira Time Tracker
 // Minimal opencode/vercel-style aesthetic
-import {
-  Box,
-  Text,
-  ASCIIFont,
-  t,
-  bold,
-  fg,
-  dim,
-} from '@opentui/core';
+import { ASCIIFont, Box, Text } from './react.js';
 import { colors } from './theme.js';
 
 /**
@@ -27,7 +19,8 @@ export function Header(): ReturnType<typeof Box> {
       border: true,
     },
     Text({
-      content: t`${bold(fg(colors.text)('JIRA TIME TRACKER'))}`,
+      content: 'JIRA TIME TRACKER',
+      fg: colors.text,
     })
   );
 }
@@ -75,7 +68,7 @@ export function StatusItem(
       gap: 1,
     },
     Text({
-      content: t`${dim(label)}`,
+      content: label,
       fg: colors.textDim,
     }),
     Text({
@@ -259,7 +252,7 @@ export function IssueDisplay(
         gap: 1,
       },
       Text({
-        content: t`${bold(issueKey)}`,
+        content: issueKey,
         fg: colors.text,
       }),
       Text({
@@ -274,7 +267,7 @@ export function IssueDisplay(
         marginLeft: 2,
       },
       Text({
-        content: t`${dim('status')}`,
+        content: 'status',
         fg: colors.textDim,
       }),
       Text({

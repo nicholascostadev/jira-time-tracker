@@ -1,12 +1,5 @@
 import {
   createCliRenderer,
-  Box,
-  Text,
-  Input,
-  Select,
-  t,
-  bold,
-  fg,
   type CliRenderer,
   type KeyEvent,
   type SelectRenderable,
@@ -27,6 +20,7 @@ import { colors, getStatusColors, isDoneStatus } from '../ui/theme.js';
 import { retryFailedWorklogs } from '../services/worklog-queue.js';
 import { getFailedWorklogs } from '../services/config.js';
 import { clearRenderer, showErrorScreen, showLoadingScreen, showReauthenticationScreen } from '../ui/screens.js';
+import { Box, Input, Select, Text, destroyUI, renderUI } from '../ui/react.js';
 
 interface StartOptions {
   description?: string;
@@ -98,7 +92,7 @@ export async function startCommand(
     const issueKeyUpper = issueKey.toUpperCase();
     if (!/^[A-Z]+-\d+$/.test(issueKeyUpper)) {
       await showErrorScreen(renderer, `Invalid issue key: ${issueKey}. Expected format: PROJECT-123`);
-      renderer.destroy();
+      destroyUI(renderer);
       process.exit(1);
     }
 
@@ -114,7 +108,7 @@ export async function startCommand(
     const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer, defaultDescription: options.description });
 
     if (result.action === 'quit') {
-      renderer.destroy();
+      destroyUI(renderer);
       console.log('\nTimer cancelled. Time was not logged.\n');
       process.exit(0);
     }
@@ -144,7 +138,7 @@ export async function startCommand(
     const result = await runInteractiveTimer({ issue: selectedIssue, timer, renderer, defaultDescription: options.description });
 
     if (result.action === 'quit') {
-      renderer.destroy();
+      destroyUI(renderer);
       console.log('\nTimer cancelled. Time was not logged.\n');
       process.exit(0);
     }
@@ -181,7 +175,7 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
       if (issue) {
         resolve(issue);
       } else {
-        renderer.destroy();
+        destroyUI(renderer);
         console.log('\nCancelled.\n');
         process.exit(1);
       }
@@ -305,7 +299,8 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
             marginBottom: 1,
           },
           Text({
-            content: t`${bold(fg(colors.text)('SELECT ISSUE'))}`,
+            content: 'SELECT ISSUE',
+            fg: colors.text,
           })
         )
       );
@@ -484,7 +479,7 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
       clearRenderer(renderer);
 
       const ui = buildUI();
-      renderer.root.add(ui);
+      renderUI(renderer, ui);
 
       if (currentStep === 'manual-input') {
         setTimeout(() => {
@@ -651,4 +646,3 @@ async function selectIssueInteractive(renderer: CliRenderer, assignedIssues: Jir
     render();
   });
 }
-

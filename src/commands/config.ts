@@ -1,11 +1,5 @@
 import {
   createCliRenderer,
-  Box,
-  Text,
-  Input,
-  t,
-  bold,
-  fg,
   type CliRenderer,
   type InputRenderable,
   type KeyEvent,
@@ -22,6 +16,7 @@ import {
 import { initializeJiraClient, testConnection } from '../services/jira.js';
 import { colors } from '../ui/theme.js';
 import { spawn } from 'child_process';
+import { Box, Input, Text, destroyUI, renderUI } from '../ui/react.js';
 
 const API_TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
 
@@ -143,7 +138,7 @@ async function interactiveConfig(): Promise<void> {
   }
 
   const cleanup = (success = false) => {
-    renderer.destroy();
+    destroyUI(renderer);
     if (!success) {
       console.log('\nConfiguration cancelled.\n');
     }
@@ -167,7 +162,8 @@ async function interactiveConfig(): Promise<void> {
           marginBottom: 1,
         },
         Text({
-          content: t`${bold(fg(colors.text)('API TOKEN CONFIGURATION'))}`,
+          content: 'API TOKEN CONFIGURATION',
+          fg: colors.text,
         })
       )
     );
@@ -331,14 +327,7 @@ async function interactiveConfig(): Promise<void> {
   };
 
   const render = () => {
-    while (renderer.root.getChildrenCount() > 0) {
-      const children = renderer.root.getChildren();
-      if (children.length > 0) {
-        renderer.root.remove(children[0].id);
-      }
-    }
-
-    renderer.root.add(buildUI());
+    renderUI(renderer, buildUI());
 
     setTimeout(() => {
       const inputMap: Record<ConfigStep, string | null> = {

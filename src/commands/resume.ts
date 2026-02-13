@@ -10,6 +10,7 @@ import { colors } from '../ui/theme.js';
 import { retryFailedWorklogs } from '../services/worklog-queue.js';
 import { getFailedWorklogs } from '../services/config.js';
 import { showLoadingScreen } from '../ui/screens.js';
+import { destroyUI } from '../ui/react.js';
 
 /**
  * Creates a shared renderer for the resume flow, reused across all screens.
@@ -70,7 +71,7 @@ export async function resumeCommand(): Promise<void> {
   const result = await runInteractiveTimer({ issue, timer, renderer });
 
   if (result.action === 'quit') {
-    renderer.destroy();
+    destroyUI(renderer);
     console.log('\nTimer cancelled. Time was not logged.\n');
 
     // Drain stdin to consume pending terminal capability responses, then exit
@@ -79,7 +80,7 @@ export async function resumeCommand(): Promise<void> {
   }
 
   // If logged, destroy renderer and exit cleanly
-  renderer.destroy();
+  destroyUI(renderer);
   drainAndExit(0);
 }
 
