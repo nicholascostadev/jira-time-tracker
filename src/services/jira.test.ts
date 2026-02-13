@@ -37,6 +37,8 @@ const {
   testConnection,
   getMyAssignedIssues,
   getCurrentUser,
+  JiraAuthenticationError,
+  isJiraAuthenticationError,
 } = await import('./jira.js');
 
 // Helper to create a test config
@@ -109,7 +111,7 @@ describe('Jira Service', () => {
       (error as Error & { response: { status: number } }).response = { status: 401 };
       mockGetIssue.mockRejectedValue(error);
 
-      await expect(getIssue('TEST-123')).rejects.toThrow('Authentication failed');
+      await expect(getIssue('TEST-123')).rejects.toBeInstanceOf(JiraAuthenticationError);
     });
   });
 
@@ -248,7 +250,7 @@ describe('Jira Service', () => {
         text: () => Promise.resolve('Unauthorized'),
       });
 
-      await expect(getMyAssignedIssues()).rejects.toThrow('Authentication failed');
+      await expect(getMyAssignedIssues()).rejects.toBeInstanceOf(JiraAuthenticationError);
     });
 
     it('retries on 500 and succeeds', async () => {
@@ -307,6 +309,29 @@ describe('Jira Service', () => {
         displayName: 'Unknown',
         email: '',
       });
+    });
+
+    it('should throw auth error for 401 response', async () => {
+      const error = new Error('Unauthorized');
+      (error as Error & { response: { status: number } }).response = { status: 401 };
+      mockGetCurrentUser.mockRejectedValue(error);
+
+      await expect(getCurrentUser()).rejects.toBeInstanceOf(JiraAuthenticationError);
+    });
+  });
+
+  describe('isJiraAuthenticationError', () => {
+    it('detects JiraAuthenticationError instances', () => {
+      expect(isJiraAuthenticationError(new JiraAuthenticationError())).toBe(true);
+    });
+
+    it('detects auth failure messages', () => {
+      expect(isJiraAuthenticationError(new Error('Authentication failed for request'))).toBe(true);
+      expect(isJiraAuthenticationError(new Error('Unauthorized'))).toBe(true);
+    });
+
+    it('returns false for unrelated errors', () => {
+      expect(isJiraAuthenticationError(new Error('Permission denied'))).toBe(false);
     });
   });
 });
